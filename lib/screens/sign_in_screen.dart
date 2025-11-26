@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../services/auth_service.dart';
+import '../services/auth_state.dart';
+import 'welcome_screen.dart';
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -11,6 +14,7 @@ class _SignInScreenState extends State<SignInScreen> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _authService = AuthService();
   bool _obscurePassword = true;
   bool _isLoading = false;
 
@@ -21,17 +25,107 @@ class _SignInScreenState extends State<SignInScreen> {
     super.dispose();
   }
 
-  void _signIn() {
+  void _showErrorDialog(String message) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2D),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+        ),
+        title: const Row(
+          children: [
+            Icon(
+              Icons.error_outline,
+              color: Color(0xFFEF4444),
+              size: 28,
+            ),
+            SizedBox(width: 12),
+            Text(
+              'Sign In Failed',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.8),
+            fontSize: 16,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            style: TextButton.styleFrom(
+              backgroundColor: const Color(0xFF8B5CF6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+            child: const Text(
+              'OK',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _signIn() async {
     if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
-      // Simulate sign in delay
-      Future.delayed(const Duration(seconds: 2), () {
-        setState(() => _isLoading = false);
-        // Handle sign in logic here
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Sign in successful!')),
-        );
+      setState(() {
+        _isLoading = true;
       });
+
+      try {
+        final result = await _authService.authenticate(
+          _emailController.text.trim(),
+          _passwordController.text,
+        );
+        
+        // Authentication successful
+        // result contains: {"token": "...", "refreshToken": "...", "id": 123}
+        final token = result['token'] as String;
+        final refreshToken = result['refreshToken'] as String;
+        final userId = result['id'] as int;
+        
+        // Store the tokens
+        AuthState().login(
+          token: token,
+          refreshToken: refreshToken,
+          userId: userId,
+        );
+        
+        if (mounted) {
+          // Navigate to welcome screen
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (context) => const WelcomeScreen()),
+            (route) => false,
+          );
+        }
+      } on AuthException catch (e) {
+        if (mounted) {
+          _showErrorDialog(e.message);
+        }
+      } catch (e) {
+        if (mounted) {
+          _showErrorDialog('Please enter correct email/password.');
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _isLoading = false);
+        }
+      }
     }
   }
 
@@ -101,7 +195,20 @@ class _SignInScreenState extends State<SignInScreen> {
                           TextFormField(
                             controller: _emailController,
                             keyboardType: TextInputType.emailAddress,
+                            textCapitalization: TextCapitalization.none,
+                            autocorrect: false,
                             style: const TextStyle(color: Colors.white),
+                            onChanged: (value) {
+                              final lowercased = value.toLowerCase();
+                              if (value != lowercased) {
+                                _emailController.value = TextEditingValue(
+                                  text: lowercased,
+                                  selection: TextSelection.collapsed(
+                                    offset: lowercased.length,
+                                  ),
+                                );
+                              }
+                            },
                             decoration: InputDecoration(
                               labelText: 'Email',
                               labelStyle: TextStyle(color: Colors.grey.shade400),
