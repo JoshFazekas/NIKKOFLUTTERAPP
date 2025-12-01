@@ -30,9 +30,14 @@ class _HomeScreenState extends State<HomeScreen> {
   
   // Bluetooth device list
   final Map<String, ScanResult> _discoveredDevices = {};
+  final Set<String> _provisionedDeviceIds = {}; // Track already provisioned devices
   StreamSubscription<List<ScanResult>>? _scanSubscription;
   Timer? _scanRefreshTimer;
+  Timer? _uiUpdateTimer;
   bool _isScanning = false;
+  bool _isScanInProgress = false; // Track if a scan operation is running
+  bool _pendingUiUpdate = false; // Throttle UI updates
+  bool _provisioningCooldown = false; // Prevent immediate re-provisioning
   String? _connectedDeviceId;
   bool _isProvisioningRunning = false;
   
@@ -54,6 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _stopDeviceScan();
+    _uiUpdateTimer?.cancel();
     _statusSubscription?.cancel();
     _messageSubscription?.cancel();
     _resultsSubscription?.cancel();
@@ -65,71 +71,143 @@ class _HomeScreenState extends State<HomeScreen> {
     final hasPermissions = await _checkPermissions();
     if (!hasPermissions) return;
 
+    // Cancel any existing subscriptions first
+    _scanRefreshTimer?.cancel();
+    _scanSubscription?.cancel();
+    await FlutterBluePlus.stopScan();
+
     setState(() {
       _isScanning = true;
+      _isScanInProgress = true;
       _discoveredDevices.clear();
     });
 
-    await FlutterBluePlus.startScan();
+    // Listen for scan results - use onScanResults which clears between scans
+    // This prevents cached results from previous scans being re-used
+    _scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
+      if (mounted && _isScanning) {
+        // Update the device map silently (no setState yet)
+        for (final result in results) {
+          final deviceId = result.device.remoteId.toString();
+          _discoveredDevices[deviceId] = result;
+        }
+        // Mark that we have pending updates
+        _pendingUiUpdate = true;
+      }
+    }, onError: (e) {
+      debugPrint('Scan error: $e');
+    });
 
-    _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-      if (mounted) {
-        setState(() {
-          for (final result in results) {
-            final deviceId = result.device.remoteId.toString();
-            // Update device if it's new or has a newer RSSI reading
-            _discoveredDevices[deviceId] = result;
-          }
-        });
-        
-        // Check if we should auto-provision a device
+    // Throttle UI updates to every 500ms to avoid overwhelming the UI
+    _uiUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      if (mounted && _isScanning && _pendingUiUpdate) {
+        _pendingUiUpdate = false;
+        setState(() {});
         _checkForAutoProvisioning();
       }
     });
 
-    // Auto-refresh scan every second
-    _scanRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted && _isScanning) {
-        FlutterBluePlus.startScan();
+    // Platform-specific scanning approach
+    if (Platform.isAndroid) {
+      // Android has a 5 scans per 30 seconds limit!
+      // Use a single continuous scan with NO timeout for continuous scanning
+      // The scan runs indefinitely until we call stopScan()
+      try {
+        await FlutterBluePlus.startScan(
+          androidUsesFineLocation: true,
+          continuousUpdates: true, // Get continuous RSSI updates
+        );
+      } catch (e) {
+        debugPrint('Android scan start error: $e');
       }
-    });
+      
+      // For Android, we DON'T restart the scan - we let it run continuously
+      // Just periodically check for auto-provisioning
+      _scanRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted && _isScanning) {
+          _checkForAutoProvisioning();
+        }
+      });
+    } else {
+      // iOS: Can use continuous scanning without timeout
+      try {
+        await FlutterBluePlus.startScan(
+          continuousUpdates: true,
+        );
+      } catch (e) {
+        debugPrint('iOS scan start error: $e');
+      }
+      
+      // Periodically check for auto-provisioning
+      _scanRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted && _isScanning) {
+          _checkForAutoProvisioning();
+        }
+      });
+    }
   }
 
-  void _stopDeviceScan() {
+  void _stopDeviceScan() async {
     _scanRefreshTimer?.cancel();
     _scanRefreshTimer = null;
+    _uiUpdateTimer?.cancel();
+    _uiUpdateTimer = null;
     _scanSubscription?.cancel();
     _scanSubscription = null;
-    FlutterBluePlus.stopScan();
-    setState(() {
-      _isScanning = false;
-    });
+    _isScanInProgress = false;
+    _pendingUiUpdate = false;
+    try {
+      await FlutterBluePlus.stopScan();
+    } catch (e) {
+      debugPrint('Stop scan error: $e');
+    }
+    if (mounted) {
+      setState(() {
+        _isScanning = false;
+      });
+    }
   }
 
   void _refreshDeviceScan() {
     _stopDeviceScan();
-    _startDeviceScan();
+    // Clear discovered devices immediately for visual feedback
+    setState(() {
+      _discoveredDevices.clear();
+    });
+    // Small delay to ensure clean stop, then restart
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _startDeviceScan();
+      }
+    });
   }
 
   /// Check if any Haven device has strong signal and should be auto-provisioned
   void _checkForAutoProvisioning() {
     // Only check if provisioning mode is ON and we're not already provisioning
-    if (!_isProvisioningRunning || _provisioningService.isRunning) {
+    // Also skip if we're in cooldown period after a recent provisioning
+    if (!_isProvisioningRunning || _provisioningService.isRunning || _provisioningCooldown) {
       return;
     }
 
     // Find the first Haven device with strong signal (>= -25 dBm)
     for (final entry in _discoveredDevices.entries) {
       final result = entry.value;
+      final deviceId = entry.key;
       final deviceName = result.device.platformName.isNotEmpty 
           ? result.device.platformName 
           : result.advertisementData.advName;
+      
+      // Skip devices we've already provisioned in this session
+      if (_provisionedDeviceIds.contains(deviceId)) {
+        continue;
+      }
       
       // Check if it's a Haven device with strong signal
       if (_provisioningService.isHavenDevice(deviceName) && result.rssi >= -25) {
         // Mark this device as being connected
         setState(() {
-          _connectedDeviceId = entry.key;
+          _connectedDeviceId = deviceId;
         });
         
         // Get the bearer token
@@ -176,13 +254,25 @@ class _HomeScreenState extends State<HomeScreen> {
           if (status == ProvisioningStatus.success) {
             _showProvisioningOverlay = false;
             _showSuccessOverlay = true;
+            
+            // Add the device to provisioned list so we don't re-provision it
+            if (_connectedDeviceId != null) {
+              _provisionedDeviceIds.add(_connectedDeviceId!);
+            }
             _connectedDeviceId = null;
             
-            // Auto-dismiss success overlay after 2.5 seconds
+            // Clear cached devices so we get fresh scan results
+            _discoveredDevices.clear();
+            
+            // Start cooldown period to prevent immediate re-provisioning
+            _provisioningCooldown = true;
+            
+            // Auto-dismiss success overlay after 2.5 seconds and end cooldown
             Future.delayed(const Duration(milliseconds: 2500), () {
               if (mounted) {
                 setState(() {
                   _showSuccessOverlay = false;
+                  _provisioningCooldown = false;
                 });
               }
             });
