@@ -7,6 +7,7 @@ import 'package:lottie/lottie.dart';
 import '../services/auth_state.dart';
 import '../services/provisioning_service.dart';
 import 'sign_in_screen.dart';
+import 'menu_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -348,6 +349,12 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _openMenuScreen(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const MenuScreen()),
+    );
+  }
+
   String _formatTime(DateTime time) {
     return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}';
   }
@@ -355,13 +362,48 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<bool> _checkPermissions() async {
     if (Platform.isIOS) {
       try {
-        final adapterState = await FlutterBluePlus.adapterState.first;
+        // On iOS, we need to trigger the Bluetooth permission prompt by trying to scan
+        // The permission dialog only appears when we actually try to use Bluetooth
+        
+        // First, try to start a scan - this will trigger the permission prompt if needed
+        try {
+          await FlutterBluePlus.startScan(timeout: const Duration(milliseconds: 500));
+          await FlutterBluePlus.stopScan();
+        } catch (e) {
+          debugPrint('Initial scan attempt: $e');
+        }
+        
+        // Wait for state to settle
+        await Future.delayed(const Duration(milliseconds: 500));
+        
+        // Now check the adapter state
+        BluetoothAdapterState adapterState = BluetoothAdapterState.unknown;
+        
+        // Wait for up to 2 seconds for Bluetooth to report correct state
+        for (int i = 0; i < 4; i++) {
+          adapterState = await FlutterBluePlus.adapterState.first.timeout(
+            const Duration(seconds: 1),
+            onTimeout: () => BluetoothAdapterState.unknown,
+          );
+          
+          // If we got a definitive state, break out
+          if (adapterState == BluetoothAdapterState.on || 
+              adapterState == BluetoothAdapterState.unauthorized ||
+              adapterState == BluetoothAdapterState.off) {
+            break;
+          }
+          
+          // Wait a bit before retrying
+          await Future.delayed(const Duration(milliseconds: 300));
+        }
+        
         if (adapterState == BluetoothAdapterState.unauthorized) {
           if (mounted) {
             _showPermissionDialog('Please enable Bluetooth permission for this app in Settings.');
           }
           return false;
         }
+        
         if (adapterState != BluetoothAdapterState.on) {
           if (mounted) {
             _showBluetoothOffDialog();
@@ -370,6 +412,7 @@ class _HomeScreenState extends State<HomeScreen> {
         }
         return true;
       } catch (e) {
+        debugPrint('Permission check error: $e');
         return true;
       }
     } else {
@@ -832,7 +875,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     child: Row(
                       children: [
-                        Image.asset('assets/logos/havenplayicon.png', height: 32),
+                        GestureDetector(
+                          onTap: () => _openMenuScreen(context),
+                          child: Image.asset('assets/images/nikko.png', height: 32),
+                        ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Center(
@@ -1113,18 +1159,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
       ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
-      floatingActionButton: FloatingActionButton(
-        mini: true,
-        heroTag: 'activity_log_fab',
-        backgroundColor: const Color(0xFF8B5CF6),
-        onPressed: _showActivityLog,
-        child: Badge(
-          isLabelVisible: _logMessages.isNotEmpty,
-          label: Text(_logMessages.length.toString()),
-          child: const Icon(Icons.article_outlined, color: Colors.white, size: 20),
-        ),
-      ),
     ),
         
         // Provisioning Overlay (deviceadding.json)
@@ -1192,113 +1226,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 decoration: TextDecoration.none,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showActivityLog() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.7,
-        decoration: const BoxDecoration(
-          color: Color(0xFF1E1E2D),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.3),
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            // Header
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Text(
-                    'Activity Log',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white.withOpacity(0.9),
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      if (_logMessages.isNotEmpty)
-                        TextButton(
-                          onPressed: () {
-                            setState(() => _logMessages.clear());
-                            Navigator.pop(context);
-                          },
-                          child: const Text('Clear', style: TextStyle(color: Color(0xFF8B5CF6))),
-                        ),
-                      IconButton(
-                        onPressed: () => Navigator.pop(context),
-                        icon: Icon(Icons.close, color: Colors.white.withOpacity(0.7)),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            // Log content
-            Expanded(
-              child: Container(
-                margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0A0A14),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.white.withOpacity(0.1)),
-                ),
-                child: _logMessages.isEmpty
-                    ? Center(
-                        child: Text(
-                          'Press Start to begin provisioning...',
-                          style: TextStyle(color: Colors.white.withOpacity(0.3)),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: _logScrollController,
-                        itemCount: _logMessages.length,
-                        itemBuilder: (context, index) {
-                          final msg = _logMessages[index];
-                          Color textColor = Colors.white.withOpacity(0.7);
-                          if (msg.contains('✓')) {
-                            textColor = const Color(0xFF22C55E);
-                          } else if (msg.contains('Error') || msg.contains('Failed')) {
-                            textColor = const Color(0xFFEF4444);
-                          } else if (msg.contains('Found device')) {
-                            textColor = const Color(0xFFFBBF24);
-                          }
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 2),
-                            child: Text(
-                              msg,
-                              style: TextStyle(
-                                fontFamily: 'monospace',
-                                fontSize: 11,
-                                color: textColor,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
               ),
             ),
           ],

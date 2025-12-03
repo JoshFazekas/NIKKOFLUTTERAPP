@@ -119,11 +119,43 @@ class AuthService {
       throw AuthException('Failed to get device credentials. Please try again.');
     }
   }
+
+  /// Validates if the current token is still valid by making a test API call
+  /// Returns true if token is valid, false if expired/invalid
+  Future<bool> validateToken(String bearerToken) async {
+    // Use a lightweight endpoint to check token validity
+    const endpoint = '$_baseUrl/User/GetCurrent';
+    
+    final headers = {
+      ..._defaultHeaders,
+      'Authorization': 'Bearer $bearerToken',
+    };
+
+    try {
+      final response = await http.get(
+        Uri.parse(endpoint),
+        headers: headers,
+      );
+
+      // Token is valid if we get a 200 response
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
 }
 
 class AuthException implements Exception {
   final String message;
   AuthException(this.message);
+
+  @override
+  String toString() => message;
+}
+
+class SessionExpiredException implements Exception {
+  final String message;
+  SessionExpiredException([this.message = 'Session has expired']);
 
   @override
   String toString() => message;

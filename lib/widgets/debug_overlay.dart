@@ -16,35 +16,9 @@ class DebugOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!enabled) return child;
-
-    return Stack(
-      children: [
-        child,
-        Positioned(
-          right: 16,
-          bottom: 36,
-          child: Material(
-            color: Colors.transparent,
-            child: FloatingActionButton(
-              mini: true,
-              heroTag: 'debug_fab',
-              backgroundColor: const Color(0xFF8B5CF6),
-              onPressed: () => _showDebugLog(),
-              child: const Icon(Icons.bug_report, color: Colors.white, size: 20),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  void _showDebugLog() {
-    navigatorKey.currentState?.push(
-      MaterialPageRoute(
-        builder: (context) => const DebugLogScreen(),
-      ),
-    );
+    // Debug log is now accessed from the menu screen
+    // No floating button needed
+    return child;
   }
 }
 

@@ -99,11 +99,13 @@ class _SignInScreenState extends State<SignInScreen> {
         final refreshToken = result['refreshToken'] as String;
         final userId = result['id'] as int;
         
-        // Store the tokens
-        AuthState().login(
+        // Store the tokens and credentials for persistent login
+        await AuthState().login(
           token: token,
           refreshToken: refreshToken,
           userId: userId,
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
         );
         
         if (mounted) {

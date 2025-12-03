@@ -8,8 +8,10 @@ import 'api_logger.dart';
 const havenServiceUuid = '00000006-8C26-476F-89A7-A108033A69C7';
 const havenCharacteristicUuid = '0000000B-8C26-476F-89A7-A108033A69C7';
 
-// Signal strength threshold - device must be very close
-const rssiThreshold = -25;
+// Signal strength threshold range - device must be in specific RSSI range
+// Only provision devices with RSSI between -10 and -25 (inclusive)
+const rssiMinThreshold = -25; // Weakest acceptable signal
+const rssiMaxThreshold = -10; // Strongest acceptable signal
 
 // Default WiFi credentials
 const defaultWifiSsid = 'shopHaven iOT';
@@ -109,7 +111,7 @@ class ProvisioningService {
       try {
         // 1. Scan until we find a strong Haven device
         _statusController.add(ProvisioningStatus.scanning);
-        _messageController.add('Scanning for nearby Haven devices (RSSI >= $rssiThreshold dBm)...');
+        _messageController.add('Scanning for nearby Haven devices (RSSI between $rssiMaxThreshold and $rssiMinThreshold dBm)...');
         
         final scanResult = await _scanUntilStrongSignal();
         
@@ -526,7 +528,9 @@ class ProvisioningService {
             ? result.device.platformName 
             : result.advertisementData.advName;
         
-        if (isHavenDevice(name) && result.rssi >= rssiThreshold) {
+        // Only provision devices with RSSI between -10 and -25 (inclusive)
+        final rssiInRange = result.rssi >= rssiMinThreshold && result.rssi <= rssiMaxThreshold;
+        if (isHavenDevice(name) && rssiInRange) {
           if (!completer.isCompleted) {
             completer.complete(result);
           }
