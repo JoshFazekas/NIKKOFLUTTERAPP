@@ -1871,7 +1871,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 '${_currentDeviceInfo!.deviceType} :${_currentDeviceInfo!.last4Mac}',
                 style: const TextStyle(
                   color: Color(0xFF8B5CF6),
-                  fontSize: 40,
+                  fontSize: 32,
                   fontWeight: FontWeight.w600,
                   decoration: TextDecoration.none,
                 ),
