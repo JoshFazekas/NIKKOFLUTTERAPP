@@ -89,11 +89,13 @@ class ProvisioningService {
   final _messageController = StreamController<String>.broadcast();
   final _resultsController = StreamController<ProvisioningResult>.broadcast();
   final _deviceInfoController = StreamController<DeviceInfo>.broadcast();
+  final _deviceAddedController = StreamController<void>.broadcast();
 
   Stream<ProvisioningStatus> get statusStream => _statusController.stream;
   Stream<String> get messageStream => _messageController.stream;
   Stream<ProvisioningResult> get resultsStream => _resultsController.stream;
   Stream<DeviceInfo> get deviceInfoStream => _deviceInfoController.stream;
+  Stream<void> get deviceAddedStream => _deviceAddedController.stream;
 
   // Stored log messages (persists across screen navigations)
   final List<String> _logMessages = [];
@@ -605,7 +607,16 @@ class ProvisioningService {
 
       // Stop BLE advertising - this completes provisioning
       _addMessage('--- Stopping BLE Advertising ---');
-      await sendCommand('<BLE.ADVERT_STOP()>');
+      try {
+        await sendCommand('<BLE.ADVERT_STOP()>');
+      } catch (e) {
+        _addMessage('BLE stop command failed (device may have disconnected): $e');
+        // Continue anyway - the provisioning was successful
+      }
+      
+      // Notify that device was successfully added (BLE stop sent = device provisioned)
+      _deviceAddedController.add(null);
+      _addMessage('📊 Counter incremented - device added!');
 
       // Device is now provisioned, disconnect cleanly
       try {

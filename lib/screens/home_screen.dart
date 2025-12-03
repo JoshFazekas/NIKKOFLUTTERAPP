@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:lottie/lottie.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../services/auth_state.dart';
 import '../services/provisioning_service.dart';
 import 'sign_in_screen.dart';
@@ -15,6 +16,10 @@ import 'menu_screen.dart';
 /// Typical values: -25 (very close), -35 (close), -50 (medium range)
 const int kDefaultProximityRssiThreshold = -25;
 
+/// Storage key for provisioned count
+const String _provisionedCountKey = 'provisioned_count_today';
+const String _provisionedCountDateKey = 'provisioned_count_date';
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -24,6 +29,12 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _provisioningService = ProvisioningService();
+  
+  // Secure storage for persisting provisioned count
+  static const _storage = FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
+  );
 
   ProvisioningStatus _status = ProvisioningStatus.idle;
   final List<String> _logMessages = [];
@@ -41,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, ScanResult> _discoveredDevices = {};
   final Set<String> _provisionedDeviceIds =
       {}; // Track already provisioned devices
+  int _provisionedCount = 0; // Counter for successfully provisioned devices
   StreamSubscription<List<ScanResult>>? _scanSubscription;
   Timer? _scanRefreshTimer;
   Timer? _uiUpdateTimer;
@@ -54,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   StreamSubscription<ProvisioningStatus>? _statusSubscription;
   StreamSubscription<String>? _messageSubscription;
   StreamSubscription<ProvisioningResult>? _resultsSubscription;
+  StreamSubscription<void>? _deviceAddedSubscription;
 
   // Overlay state
   bool _showProvisioningOverlay = false;
@@ -74,8 +87,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _loadProvisionedCount();
     _setupListeners();
     _startDeviceScan();
+  }
+
+  /// Load the provisioned count from storage (resets daily)
+  Future<void> _loadProvisionedCount() async {
+    try {
+      final today = DateTime.now().toIso8601String().substring(0, 10); // YYYY-MM-DD
+      final storedDate = await _storage.read(key: _provisionedCountDateKey);
+      
+      if (storedDate == today) {
+        // Same day, load the count
+        final countStr = await _storage.read(key: _provisionedCountKey);
+        if (countStr != null && mounted) {
+          setState(() {
+            _provisionedCount = int.tryParse(countStr) ?? 0;
+          });
+        }
+      } else {
+        // New day, reset the count
+        await _storage.write(key: _provisionedCountDateKey, value: today);
+        await _storage.write(key: _provisionedCountKey, value: '0');
+      }
+    } catch (e) {
+      debugPrint('Error loading provisioned count: $e');
+    }
+  }
+
+  /// Save the provisioned count to storage
+  Future<void> _saveProvisionedCount() async {
+    try {
+      final today = DateTime.now().toIso8601String().substring(0, 10);
+      await _storage.write(key: _provisionedCountDateKey, value: today);
+      await _storage.write(key: _provisionedCountKey, value: _provisionedCount.toString());
+    } catch (e) {
+      debugPrint('Error saving provisioned count: $e');
+    }
   }
 
   @override
@@ -87,6 +136,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _statusSubscription?.cancel();
     _messageSubscription?.cancel();
     _resultsSubscription?.cancel();
+    _deviceAddedSubscription?.cancel();
     _deviceInfoSubscription?.cancel();
     _logScrollController.dispose();
     super.dispose();
@@ -401,6 +451,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             _showProvisioningOverlay = false;
             _showSuccessOverlay = true;
 
+            // Note: Counter is incremented when BLE stop command is sent (deviceAddedStream)
+
             // Add the device to provisioned list so we don't re-provision it
             if (_connectedDeviceId != null) {
               _provisionedDeviceIds.add(_connectedDeviceId!);
@@ -413,8 +465,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             // Start cooldown period to prevent immediate re-provisioning
             _provisioningCooldown = true;
 
-            // Auto-dismiss success overlay after 2.5 seconds and end cooldown
-            Future.delayed(const Duration(milliseconds: 2500), () {
+            // Auto-dismiss success overlay after 1.5 seconds and end cooldown
+            Future.delayed(const Duration(milliseconds: 1500), () {
               if (mounted) {
                 setState(() {
                   _showSuccessOverlay = false;
@@ -501,6 +553,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         setState(() {
           _currentDeviceInfo = info;
         });
+      }
+    });
+
+    // Listen for device added events (BLE stop command sent = device provisioned)
+    _deviceAddedSubscription = _provisioningService.deviceAddedStream.listen((_) {
+      debugPrint('🎯 deviceAddedStream received! Current count: $_provisionedCount');
+      if (mounted) {
+        setState(() {
+          _provisionedCount++;
+          debugPrint('🎯 Counter incremented to: $_provisionedCount');
+        });
+        // Persist the count to storage
+        _saveProvisionedCount();
       }
     });
   }
@@ -1202,6 +1267,81 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
+  void _showDeviceCountDialog() {
+    String message;
+    String lottieAsset;
+    Color countColor;
+    
+    if (_provisionedCount >= 20) {
+      message = 'You have added a grand total of $_provisionedCount ${_provisionedCount == 1 ? 'device' : 'devices'} today!';
+      lottieAsset = 'assets/lottie/fire.json';
+      countColor = const Color(0xFFFF6B35); // Orange/fire color
+    } else if (_provisionedCount >= 10) {
+      message = 'You have added a decent $_provisionedCount ${_provisionedCount == 1 ? 'device' : 'devices'} today!';
+      lottieAsset = 'assets/lottie/rocket.json';
+      countColor = const Color(0xFF22C55E); // Green
+    } else {
+      message = 'You have added a lousy $_provisionedCount ${_provisionedCount == 1 ? 'device' : 'devices'} today!';
+      lottieAsset = 'assets/lottie/angry.json';
+      countColor = const Color(0xFFEF4444); // Red
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E2D),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Column(
+          children: [
+            SizedBox(
+              width: 100,
+              height: 100,
+              child: Lottie.asset(
+                lottieAsset,
+                fit: BoxFit.contain,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Devices Added',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '$_provisionedCount',
+              style: TextStyle(
+                color: countColor,
+                fontSize: 64,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
+        content: Text(
+          message,
+          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 16),
+          textAlign: TextAlign.center,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            style: TextButton.styleFrom(
+              backgroundColor: const Color(0xFF8B5CF6),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('OK', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showErrorDialog(String message) {
     showDialog(
       context: context,
@@ -1355,6 +1495,116 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
   }
 
+  /// Build the counter badge with different styles based on count
+  Widget _buildCounterBadge() {
+    // Determine colors and effects based on count
+    Color backgroundColor;
+    Color borderColor;
+    Color textColor;
+    List<BoxShadow>? boxShadow;
+    Gradient? gradient;
+
+    if (_provisionedCount >= 40) {
+      // 40-100+: FIRE MODE 🔥 - intense fire gradient with glow
+      gradient = const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          Color(0xFFFF4500), // Orange red
+          Color(0xFFFF6B00), // Orange
+          Color(0xFFFFD700), // Gold
+          Color(0xFFFF4500), // Orange red
+        ],
+      );
+      borderColor = const Color(0xFFFFD700);
+      textColor = Colors.white;
+      boxShadow = [
+        BoxShadow(
+          color: const Color(0xFFFF4500).withOpacity(0.6),
+          blurRadius: 20,
+          spreadRadius: 2,
+        ),
+        BoxShadow(
+          color: const Color(0xFFFFD700).withOpacity(0.4),
+          blurRadius: 30,
+          spreadRadius: 4,
+        ),
+      ];
+      backgroundColor = Colors.transparent;
+    } else if (_provisionedCount >= 20) {
+      // 20-39: Fiery glow effect - warm orange glow
+      gradient = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [
+          const Color(0xFFFF6B35).withOpacity(0.8),
+          const Color(0xFFFF4500).withOpacity(0.6),
+        ],
+      );
+      borderColor = const Color(0xFFFF6B35);
+      textColor = Colors.white;
+      boxShadow = [
+        BoxShadow(
+          color: const Color(0xFFFF6B35).withOpacity(0.5),
+          blurRadius: 12,
+          spreadRadius: 1,
+        ),
+      ];
+      backgroundColor = Colors.transparent;
+    } else if (_provisionedCount >= 10) {
+      // 10-19: Light green
+      backgroundColor = const Color(0xFF22C55E).withOpacity(0.25);
+      borderColor = const Color(0xFF22C55E).withOpacity(0.6);
+      textColor = const Color(0xFF22C55E);
+      boxShadow = [
+        BoxShadow(
+          color: const Color(0xFF22C55E).withOpacity(0.3),
+          blurRadius: 8,
+          spreadRadius: 0,
+        ),
+      ];
+    } else if (_provisionedCount > 0) {
+      // 1-9: Grey/neutral (same as 0)
+      backgroundColor = Colors.white.withOpacity(0.1);
+      borderColor = Colors.white.withOpacity(0.2);
+      textColor = Colors.white;
+    } else {
+      // 0: Grey/neutral
+      backgroundColor = Colors.white.withOpacity(0.1);
+      borderColor = Colors.white.withOpacity(0.2);
+      textColor = Colors.white;
+    }
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: gradient == null ? backgroundColor : null,
+        gradient: gradient,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: borderColor, width: _provisionedCount >= 20 ? 2 : 1),
+        boxShadow: boxShadow,
+      ),
+      child: AnimatedCounter(
+        value: _provisionedCount,
+        style: TextStyle(
+          fontSize: 22,
+          fontWeight: FontWeight.bold,
+          color: textColor,
+          shadows: _provisionedCount >= 40
+              ? [
+                  const Shadow(
+                    color: Colors.black54,
+                    blurRadius: 4,
+                    offset: Offset(1, 1),
+                  ),
+                ]
+              : null,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isRunning = _isProvisioningRunning;
@@ -1385,35 +1635,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                     child: Row(
                       children: [
-                        GestureDetector(
-                          onTap: () => _openMenuScreen(context),
-                          child: Image.asset(
-                            'assets/images/nikko.png',
-                            height: 32,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Center(
-                            child: const Text(
-                              'Provisioning',
-                              style: TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
+                        SizedBox(
+                          width: 48,
+                          child: GestureDetector(
+                            onTap: () => _openMenuScreen(context),
+                            child: Image.asset(
+                              'assets/images/nikko.png',
+                              height: 32,
                             ),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        IconButton(
-                          onPressed: () => _showLogoutConfirmation(context),
-                          icon: const Icon(
-                            Icons.logout_rounded,
-                            color: Colors.white70,
-                            size: 24,
+                        Expanded(
+                          child: Center(
+                            child: GestureDetector(
+                              onTap: _showDeviceCountDialog,
+                              child: _buildCounterBadge(),
+                            ),
                           ),
-                          tooltip: 'Logout',
+                        ),
+                        SizedBox(
+                          width: 48,
+                          child: IconButton(
+                            onPressed: () => _showLogoutConfirmation(context),
+                            icon: const Icon(
+                              Icons.logout_rounded,
+                              color: Colors.white70,
+                              size: 24,
+                            ),
+                            tooltip: 'Logout',
+                          ),
                         ),
                       ],
                     ),
@@ -1999,6 +2249,212 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }),
         ),
       ],
+    );
+  }
+}
+
+/// Animated counter widget with flip/slide animation like a digital clock
+class AnimatedCounter extends StatelessWidget {
+  final int value;
+  final TextStyle? style;
+  final Duration duration;
+
+  const AnimatedCounter({
+    super.key,
+    required this.value,
+    this.style,
+    this.duration = const Duration(milliseconds: 300),
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Pass value directly to _AnimatedDigits which handles its own animation
+    return _AnimatedDigits(
+      value: value,
+      style: style,
+      duration: duration,
+    );
+  }
+}
+
+class _AnimatedDigits extends StatefulWidget {
+  final int value;
+  final TextStyle? style;
+  final Duration duration;
+
+  const _AnimatedDigits({
+    required this.value,
+    this.style,
+    required this.duration,
+  });
+
+  @override
+  State<_AnimatedDigits> createState() => _AnimatedDigitsState();
+}
+
+class _AnimatedDigitsState extends State<_AnimatedDigits> {
+  int _previousValue = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _previousValue = widget.value;
+  }
+
+  @override
+  void didUpdateWidget(_AnimatedDigits oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.value != widget.value) {
+      _previousValue = oldWidget.value;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final digits = widget.value.toString().split('');
+    final prevDigits = _previousValue.toString().split('');
+    
+    // Pad the shorter one with empty strings on the left
+    while (prevDigits.length < digits.length) {
+      prevDigits.insert(0, '');
+    }
+    while (digits.length < prevDigits.length) {
+      digits.insert(0, '');
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(digits.length, (index) {
+        final currentDigit = digits[index];
+        final prevDigit = prevDigits[index];
+        final hasChanged = currentDigit != prevDigit;
+
+        return _SingleDigitAnimation(
+          digit: currentDigit,
+          previousDigit: prevDigit,
+          animate: hasChanged,
+          style: widget.style,
+          duration: widget.duration,
+        );
+      }),
+    );
+  }
+}
+
+class _SingleDigitAnimation extends StatefulWidget {
+  final String digit;
+  final String previousDigit;
+  final bool animate;
+  final TextStyle? style;
+  final Duration duration;
+
+  const _SingleDigitAnimation({
+    required this.digit,
+    required this.previousDigit,
+    required this.animate,
+    this.style,
+    required this.duration,
+  });
+
+  @override
+  State<_SingleDigitAnimation> createState() => _SingleDigitAnimationState();
+}
+
+class _SingleDigitAnimationState extends State<_SingleDigitAnimation>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<Offset> _slideOutAnimation;
+  late Animation<Offset> _slideInAnimation;
+  late Animation<double> _fadeOutAnimation;
+  late Animation<double> _fadeInAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: widget.duration,
+    );
+
+    _slideOutAnimation = Tween<Offset>(
+      begin: Offset.zero,
+      end: const Offset(0, -1),
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+
+    _slideInAnimation = Tween<Offset>(
+      begin: const Offset(0, 1),
+      end: Offset.zero,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeInOut,
+    ));
+
+    _fadeOutAnimation = Tween<double>(
+      begin: 1.0,
+      end: 0.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.0, 0.5, curve: Curves.easeIn),
+    ));
+
+    _fadeInAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.5, 1.0, curve: Curves.easeOut),
+    ));
+
+    if (widget.animate) {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_SingleDigitAnimation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.animate && widget.digit != oldWidget.digit) {
+      _controller.reset();
+      _controller.forward();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.animate || widget.digit == widget.previousDigit) {
+      return Text(widget.digit, style: widget.style);
+    }
+
+    return ClipRect(
+      child: Stack(
+        children: [
+          // Outgoing digit (slides up and fades out)
+          SlideTransition(
+            position: _slideOutAnimation,
+            child: FadeTransition(
+              opacity: _fadeOutAnimation,
+              child: Text(widget.previousDigit, style: widget.style),
+            ),
+          ),
+          // Incoming digit (slides up from below and fades in)
+          SlideTransition(
+            position: _slideInAnimation,
+            child: FadeTransition(
+              opacity: _fadeInAnimation,
+              child: Text(widget.digit, style: widget.style),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
