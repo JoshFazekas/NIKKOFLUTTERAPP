@@ -4,7 +4,9 @@ import '../services/auth_state.dart';
 import 'home_screen.dart';
 
 class SignInScreen extends StatefulWidget {
-  const SignInScreen({super.key});
+  final String? initialEmail;
+  
+  const SignInScreen({super.key, this.initialEmail});
 
   @override
   State<SignInScreen> createState() => _SignInScreenState();
@@ -17,6 +19,26 @@ class _SignInScreenState extends State<SignInScreen> {
   final _authService = AuthService();
   bool _obscurePassword = true;
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLastEmail();
+  }
+
+  Future<void> _loadLastEmail() async {
+    // Use initialEmail if provided, otherwise try to get the last email from storage
+    if (widget.initialEmail != null && widget.initialEmail!.isNotEmpty) {
+      _emailController.text = widget.initialEmail!;
+    } else {
+      final lastEmail = await AuthState().getLastEmail();
+      if (lastEmail != null && mounted) {
+        setState(() {
+          _emailController.text = lastEmail;
+        });
+      }
+    }
+  }
 
   @override
   void dispose() {

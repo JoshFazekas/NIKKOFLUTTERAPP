@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../widgets/debug_overlay.dart';
+import '../services/provisioning_service.dart';
 
 class MenuScreen extends StatelessWidget {
   const MenuScreen({super.key});
@@ -174,8 +176,69 @@ class _MenuButton extends StatelessWidget {
   }
 }
 
-class ActivityLogScreen extends StatelessWidget {
+class ActivityLogScreen extends StatefulWidget {
   const ActivityLogScreen({super.key});
+
+  @override
+  State<ActivityLogScreen> createState() => _ActivityLogScreenState();
+}
+
+class _ActivityLogScreenState extends State<ActivityLogScreen> {
+  final _provisioningService = ProvisioningService();
+  List<String> _logMessages = [];
+  final ScrollController _scrollController = ScrollController();
+  StreamSubscription<String>? _messageSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    // Load existing log messages from the provisioning service
+    _logMessages = List.from(_provisioningService.logMessages);
+    _setupListener();
+    
+    // Scroll to bottom after initial load
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients && _logMessages.isNotEmpty) {
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _messageSubscription?.cancel();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _setupListener() {
+    // Listen for new messages that come in while this screen is open
+    _messageSubscription = _provisioningService.messageStream.listen((message) {
+      if (mounted) {
+        // Refresh from the service's stored messages to stay in sync
+        setState(() {
+          _logMessages = List.from(_provisioningService.logMessages);
+        });
+        // Auto-scroll to bottom
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+      }
+    });
+  }
+
+  void _clearLog() {
+    _provisioningService.clearLogMessages();
+    setState(() {
+      _logMessages.clear();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -210,45 +273,144 @@ class ActivityLogScreen extends StatelessWidget {
                         color: Colors.white,
                       ),
                     ),
+                    const Spacer(),
+                    if (_logMessages.isNotEmpty)
+                      IconButton(
+                        onPressed: _clearLog,
+                        icon: Icon(
+                          Icons.delete_outline,
+                          color: Colors.white.withOpacity(0.7),
+                          size: 24,
+                        ),
+                        tooltip: 'Clear Log',
+                      ),
                   ],
                 ),
               ),
               
               // Activity log content
               Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.history,
-                        size: 64,
-                        color: Colors.white.withOpacity(0.3),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No activity yet',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.6),
-                          fontSize: 18,
+                child: _logMessages.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.terminal_rounded,
+                              size: 64,
+                              color: Colors.white.withOpacity(0.3),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No activity yet',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.6),
+                                fontSize: 18,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'TX/RX data will appear here during provisioning',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.4),
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 16),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1E1E2D),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.1),
+                          ),
+                        ),
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          itemCount: _logMessages.length,
+                          itemBuilder: (context, index) {
+                            final message = _logMessages[index];
+                            Color textColor = Colors.white.withOpacity(0.7);
+                            FontWeight fontWeight = FontWeight.normal;
+                            
+                            // Highlight TX/RX messages
+                            if (message.contains('[TX→]')) {
+                              textColor = const Color(0xFF22C55E); // Green for TX
+                              fontWeight = FontWeight.w500;
+                            } else if (message.contains('[←RX]')) {
+                              textColor = const Color(0xFF3B82F6); // Blue for RX
+                              fontWeight = FontWeight.w500;
+                            } else if (message.contains('Error') || message.contains('ERROR')) {
+                              textColor = const Color(0xFFEF4444); // Red for errors
+                            } else if (message.contains('✓')) {
+                              textColor = const Color(0xFF22C55E); // Green for success
+                            } else if (message.contains('---')) {
+                              textColor = Colors.white.withOpacity(0.3);
+                            }
+                            
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Text(
+                                message,
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontSize: 11,
+                                  fontWeight: fontWeight,
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Provisioning activity will appear here',
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(0.4),
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
+              ),
+              
+              // Legend at bottom
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildLegendItem('TX', const Color(0xFF22C55E)),
+                    const SizedBox(width: 24),
+                    _buildLegendItem('RX', const Color(0xFF3B82F6)),
+                    const SizedBox(width: 24),
+                    _buildLegendItem('Error', const Color(0xFFEF4444)),
+                  ],
                 ),
               ),
             ],
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildLegendItem(String label, Color color) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(3),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          label,
+          style: TextStyle(
+            color: Colors.white.withOpacity(0.6),
+            fontSize: 12,
+          ),
+        ),
+      ],
     );
   }
 }

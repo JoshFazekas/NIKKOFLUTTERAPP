@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:lottie/lottie.dart';
@@ -9,6 +10,11 @@ import '../services/provisioning_service.dart';
 import 'sign_in_screen.dart';
 import 'menu_screen.dart';
 
+/// RSSI threshold for auto-provisioning (in dBm). 
+/// Devices must have signal strength >= this value to trigger connection.
+/// Typical values: -25 (very close), -35 (close), -50 (medium range)
+const int kDefaultProximityRssiThreshold = -25;
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -16,22 +22,25 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _provisioningService = ProvisioningService();
-  
+
   ProvisioningStatus _status = ProvisioningStatus.idle;
   final List<String> _logMessages = [];
   final List<ProvisioningResult> _results = [];
   final ScrollController _logScrollController = ScrollController();
-  
+
   // Scan settings
   String _wifiSsid = defaultWifiSsid;
   String _wifiPassword = defaultWifiPassword;
-  String _locationId = ''; // Required - no default
-  
+  int _rssiThreshold = kDefaultProximityRssiThreshold; // RSSI threshold for auto-connect
+  bool _autoLocationMode = true; // true = Auto, false = Custom
+  String _customLocationId = ''; // Only used when _autoLocationMode is false
+
   // Bluetooth device list
   final Map<String, ScanResult> _discoveredDevices = {};
-  final Set<String> _provisionedDeviceIds = {}; // Track already provisioned devices
+  final Set<String> _provisionedDeviceIds =
+      {}; // Track already provisioned devices
   StreamSubscription<List<ScanResult>>? _scanSubscription;
   Timer? _scanRefreshTimer;
   Timer? _uiUpdateTimer;
@@ -41,7 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _provisioningCooldown = false; // Prevent immediate re-provisioning
   String? _connectedDeviceId;
   bool _isProvisioningRunning = false;
-  
+
   StreamSubscription<ProvisioningStatus>? _statusSubscription;
   StreamSubscription<String>? _messageSubscription;
   StreamSubscription<ProvisioningResult>? _resultsSubscription;
@@ -49,23 +58,51 @@ class _HomeScreenState extends State<HomeScreen> {
   // Overlay state
   bool _showProvisioningOverlay = false;
   bool _showSuccessOverlay = false;
+  
+  // Close proximity countdown state
+  bool _showCloseProximityOverlay = false;
+  String? _proximityDeviceId;
+  String? _proximityDeviceName;
+  Timer? _proximityCountdownTimer;
+  int _proximityCountdownSeconds = 2;
+
+  // Device info from WHO_AM_I
+  DeviceInfo? _currentDeviceInfo;
+  StreamSubscription<DeviceInfo>? _deviceInfoSubscription;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupListeners();
     _startDeviceScan();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _stopDeviceScan();
     _uiUpdateTimer?.cancel();
+    _proximityCountdownTimer?.cancel();
     _statusSubscription?.cancel();
     _messageSubscription?.cancel();
     _resultsSubscription?.cancel();
+    _deviceInfoSubscription?.cancel();
     _logScrollController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Stop provisioning when app is minimized or closed
+    if (state == AppLifecycleState.paused || 
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      if (_isProvisioningRunning) {
+        _stopProvisioning();
+      }
+    }
   }
 
   void _startDeviceScan() async {
@@ -85,19 +122,22 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Listen for scan results - use onScanResults which clears between scans
     // This prevents cached results from previous scans being re-used
-    _scanSubscription = FlutterBluePlus.onScanResults.listen((results) {
-      if (mounted && _isScanning) {
-        // Update the device map silently (no setState yet)
-        for (final result in results) {
-          final deviceId = result.device.remoteId.toString();
-          _discoveredDevices[deviceId] = result;
+    _scanSubscription = FlutterBluePlus.onScanResults.listen(
+      (results) {
+        if (mounted && _isScanning) {
+          // Update the device map silently (no setState yet)
+          for (final result in results) {
+            final deviceId = result.device.remoteId.toString();
+            _discoveredDevices[deviceId] = result;
+          }
+          // Mark that we have pending updates
+          _pendingUiUpdate = true;
         }
-        // Mark that we have pending updates
-        _pendingUiUpdate = true;
-      }
-    }, onError: (e) {
-      debugPrint('Scan error: $e');
-    });
+      },
+      onError: (e) {
+        debugPrint('Scan error: $e');
+      },
+    );
 
     // Throttle UI updates to every 500ms to avoid overwhelming the UI
     _uiUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
@@ -121,7 +161,7 @@ class _HomeScreenState extends State<HomeScreen> {
       } catch (e) {
         debugPrint('Android scan start error: $e');
       }
-      
+
       // For Android, we DON'T restart the scan - we let it run continuously
       // Just periodically check for auto-provisioning
       _scanRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -132,13 +172,11 @@ class _HomeScreenState extends State<HomeScreen> {
     } else {
       // iOS: Can use continuous scanning without timeout
       try {
-        await FlutterBluePlus.startScan(
-          continuousUpdates: true,
-        );
+        await FlutterBluePlus.startScan(continuousUpdates: true);
       } catch (e) {
         debugPrint('iOS scan start error: $e');
       }
-      
+
       // Periodically check for auto-provisioning
       _scanRefreshTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (mounted && _isScanning) {
@@ -187,52 +225,156 @@ class _HomeScreenState extends State<HomeScreen> {
   void _checkForAutoProvisioning() {
     // Only check if provisioning mode is ON and we're not already provisioning
     // Also skip if we're in cooldown period after a recent provisioning
-    if (!_isProvisioningRunning || _provisioningService.isRunning || _provisioningCooldown) {
+    if (!_isProvisioningRunning ||
+        _provisioningService.isRunning ||
+        _provisioningCooldown) {
       return;
     }
 
-    // Find the first Haven device with strong signal (>= -25 dBm)
+    // If we're already counting down for a device, check if that device is still above threshold
+    // STICK with this device - don't switch to another even if it's stronger
+    if (_showCloseProximityOverlay && _proximityDeviceId != null) {
+      final currentDevice = _discoveredDevices[_proximityDeviceId];
+      if (currentDevice != null && currentDevice.rssi >= _rssiThreshold) {
+        // Current device is still above threshold, let the countdown continue
+        return;
+      }
+      // Current device dropped below threshold, cancel and look for another
+      _cancelProximityCountdown();
+    }
+
+    // Find the first Haven device with strong signal
+    ScanResult? strongSignalDevice;
+    String? strongSignalDeviceId;
+    String? strongSignalDeviceName;
+    
     for (final entry in _discoveredDevices.entries) {
       final result = entry.value;
       final deviceId = entry.key;
-      final deviceName = result.device.platformName.isNotEmpty 
-          ? result.device.platformName 
+      final deviceName = result.device.platformName.isNotEmpty
+          ? result.device.platformName
           : result.advertisementData.advName;
-      
+
       // Skip devices we've already provisioned in this session
       if (_provisionedDeviceIds.contains(deviceId)) {
         continue;
       }
-      
-      // Check if it's a Haven device with strong signal
-      if (_provisioningService.isHavenDevice(deviceName) && result.rssi >= -25) {
-        // Mark this device as being connected
-        setState(() {
-          _connectedDeviceId = deviceId;
-        });
-        
-        // Get the bearer token
-        final authState = AuthState();
-        final bearerToken = authState.token;
-        
-        if (bearerToken == null || bearerToken.isEmpty) {
-          return;
-        }
 
-        // Trigger provisioning for this device
-        _provisioningService.provisionDevice(
-          scanResult: result,
-          bearerToken: bearerToken,
-          ssid: _wifiSsid,
-          wifiPassword: _wifiPassword,
-          locationId: _locationId,
-        );
-        
-        // Stop scanning while provisioning
-        _stopDeviceScan();
+      // Skip devices with positive dBm (invalid readings)
+      if (result.rssi >= 0) {
+        continue;
+      }
+
+      // Check if it's a Haven device with strong signal
+      if (_provisioningService.isHavenDevice(deviceName) &&
+          result.rssi >= _rssiThreshold) {
+        strongSignalDevice = result;
+        strongSignalDeviceId = deviceId;
+        strongSignalDeviceName = deviceName;
         break;
       }
     }
+
+    // If we found a strong signal device, start countdown for it
+    if (strongSignalDevice != null && strongSignalDeviceId != null) {
+      _startProximityCountdown(strongSignalDevice, strongSignalDeviceId, strongSignalDeviceName ?? 'Haven Device');
+    }
+  }
+
+  /// Start the 2-second proximity countdown before connecting
+  void _startProximityCountdown(ScanResult scanResult, String deviceId, String deviceName) {
+    // Cancel any existing countdown
+    _proximityCountdownTimer?.cancel();
+    
+    // Heavy haptic feedback when proximity detected - like a PS5 controller rumble!
+    HapticFeedback.heavyImpact();
+    
+    setState(() {
+      _showCloseProximityOverlay = true;
+      _proximityDeviceId = deviceId;
+      _proximityDeviceName = deviceName;
+      _proximityCountdownSeconds = 2;
+    });
+
+    // Start countdown timer
+    _proximityCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      // Check if device still has strong signal
+      final currentDevice = _discoveredDevices[deviceId];
+      if (currentDevice == null || currentDevice.rssi < _rssiThreshold) {
+        // Device moved away, cancel countdown
+        _cancelProximityCountdown();
+        return;
+      }
+
+      // Haptic feedback on each countdown tick
+      HapticFeedback.mediumImpact();
+
+      setState(() {
+        _proximityCountdownSeconds--;
+      });
+
+      if (_proximityCountdownSeconds <= 0) {
+        timer.cancel();
+        // Final strong haptic when connecting
+        HapticFeedback.heavyImpact();
+        _connectToDevice(scanResult, deviceId);
+      }
+    });
+  }
+
+  /// Cancel the proximity countdown
+  void _cancelProximityCountdown() {
+    _proximityCountdownTimer?.cancel();
+    _proximityCountdownTimer = null;
+    if (mounted && _showCloseProximityOverlay) {
+      setState(() {
+        _showCloseProximityOverlay = false;
+        _proximityDeviceId = null;
+        _proximityDeviceName = null;
+        _proximityCountdownSeconds = 2;
+      });
+    }
+  }
+
+  /// Actually connect to the device after countdown completes
+  void _connectToDevice(ScanResult scanResult, String deviceId) {
+    // Cancel the proximity countdown timer
+    _proximityCountdownTimer?.cancel();
+    _proximityCountdownTimer = null;
+    
+    setState(() {
+      _showCloseProximityOverlay = false;
+      _proximityDeviceId = null;
+      _proximityDeviceName = null;
+      _proximityCountdownSeconds = 2;
+      _connectedDeviceId = deviceId;
+    });
+
+    // Get the bearer token
+    final authState = AuthState();
+    final bearerToken = authState.token;
+
+    if (bearerToken == null || bearerToken.isEmpty) {
+      return;
+    }
+
+    // Trigger provisioning for this device
+    _provisioningService.provisionDevice(
+      scanResult: scanResult,
+      bearerToken: bearerToken,
+      ssid: _wifiSsid,
+      wifiPassword: _wifiPassword,
+      autoLocationMode: _autoLocationMode,
+      customLocationId: _customLocationId,
+    );
+
+    // Stop scanning while provisioning
+    _stopDeviceScan();
   }
 
   void _setupListeners() {
@@ -240,7 +382,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) {
         setState(() {
           _status = status;
-          
+
           // Show provisioning overlay when connecting/provisioning
           if (status == ProvisioningStatus.connecting ||
               status == ProvisioningStatus.discoveringServices ||
@@ -250,42 +392,47 @@ class _HomeScreenState extends State<HomeScreen> {
             _showSuccessOverlay = false;
             _stopDeviceScan();
           }
-          
+
+          // Note: Device info is now set immediately when connecting starts
+          // (with preliminary data from BLE name), then updated after WHO_AM_I
+
           // Show success overlay when done
           if (status == ProvisioningStatus.success) {
             _showProvisioningOverlay = false;
             _showSuccessOverlay = true;
-            
+
             // Add the device to provisioned list so we don't re-provision it
             if (_connectedDeviceId != null) {
               _provisionedDeviceIds.add(_connectedDeviceId!);
             }
             _connectedDeviceId = null;
-            
+
             // Clear cached devices so we get fresh scan results
             _discoveredDevices.clear();
-            
+
             // Start cooldown period to prevent immediate re-provisioning
             _provisioningCooldown = true;
-            
+
             // Auto-dismiss success overlay after 2.5 seconds and end cooldown
             Future.delayed(const Duration(milliseconds: 2500), () {
               if (mounted) {
                 setState(() {
                   _showSuccessOverlay = false;
                   _provisioningCooldown = false;
+                  _currentDeviceInfo = null; // Clear device info after success
                 });
               }
             });
           }
-          
+
           // Hide overlays on error and clear connected device
           if (status == ProvisioningStatus.error) {
             _showProvisioningOverlay = false;
             _showSuccessOverlay = false;
             _connectedDeviceId = null;
+            _currentDeviceInfo = null;
           }
-          
+
           // Clear connected device and resume scanning when idle
           if (status == ProvisioningStatus.idle) {
             _connectedDeviceId = null;
@@ -307,14 +454,14 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_logMessages.length > 100) {
             _logMessages.removeAt(0);
           }
-          
+
           // Extract connected device ID from "Connecting to" message
           if (message.contains('Connecting to')) {
             // Try to find the device by name in our discovered devices
             for (final entry in _discoveredDevices.entries) {
               final result = entry.value;
-              final deviceName = result.device.platformName.isNotEmpty 
-                  ? result.device.platformName 
+              final deviceName = result.device.platformName.isNotEmpty
+                  ? result.device.platformName
                   : result.advertisementData.advName;
               if (message.contains(deviceName)) {
                 _connectedDeviceId = entry.key;
@@ -347,12 +494,25 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     });
+
+    // Listen for device info updates from WHO_AM_I
+    _deviceInfoSubscription = _provisioningService.deviceInfoStream.listen((info) {
+      if (mounted) {
+        setState(() {
+          _currentDeviceInfo = info;
+        });
+      }
+    });
   }
 
   void _openMenuScreen(BuildContext context) {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (context) => const MenuScreen()),
-    );
+    // Stop provisioning when navigating to menu
+    if (_isProvisioningRunning) {
+      _stopProvisioning();
+    }
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (context) => const MenuScreen()));
   }
 
   String _formatTime(DateTime time) {
@@ -364,46 +524,50 @@ class _HomeScreenState extends State<HomeScreen> {
       try {
         // On iOS, we need to trigger the Bluetooth permission prompt by trying to scan
         // The permission dialog only appears when we actually try to use Bluetooth
-        
+
         // First, try to start a scan - this will trigger the permission prompt if needed
         try {
-          await FlutterBluePlus.startScan(timeout: const Duration(milliseconds: 500));
+          await FlutterBluePlus.startScan(
+            timeout: const Duration(milliseconds: 500),
+          );
           await FlutterBluePlus.stopScan();
         } catch (e) {
           debugPrint('Initial scan attempt: $e');
         }
-        
+
         // Wait for state to settle
         await Future.delayed(const Duration(milliseconds: 500));
-        
+
         // Now check the adapter state
         BluetoothAdapterState adapterState = BluetoothAdapterState.unknown;
-        
+
         // Wait for up to 2 seconds for Bluetooth to report correct state
         for (int i = 0; i < 4; i++) {
           adapterState = await FlutterBluePlus.adapterState.first.timeout(
             const Duration(seconds: 1),
             onTimeout: () => BluetoothAdapterState.unknown,
           );
-          
+
           // If we got a definitive state, break out
-          if (adapterState == BluetoothAdapterState.on || 
+          if (adapterState == BluetoothAdapterState.on ||
               adapterState == BluetoothAdapterState.unauthorized ||
               adapterState == BluetoothAdapterState.off) {
             break;
           }
-          
+
           // Wait a bit before retrying
           await Future.delayed(const Duration(milliseconds: 300));
         }
-        
+
         if (adapterState == BluetoothAdapterState.unauthorized) {
           if (mounted) {
-            _showPermissionDialog('Please enable Bluetooth permission for this app in Settings.');
+            _showPermissionDialog(
+              'Please enable Bluetooth permission for this app in Settings.',
+            );
           }
           return false;
         }
-        
+
         if (adapterState != BluetoothAdapterState.on) {
           if (mounted) {
             _showBluetoothOffDialog();
@@ -419,35 +583,44 @@ class _HomeScreenState extends State<HomeScreen> {
       final bluetoothScanStatus = await Permission.bluetoothScan.status;
       final bluetoothConnectStatus = await Permission.bluetoothConnect.status;
 
-      bool allGranted = (bluetoothScanStatus.isGranted || bluetoothScanStatus.isLimited) &&
-          (bluetoothConnectStatus.isGranted || bluetoothConnectStatus.isLimited);
+      bool allGranted =
+          (bluetoothScanStatus.isGranted || bluetoothScanStatus.isLimited) &&
+          (bluetoothConnectStatus.isGranted ||
+              bluetoothConnectStatus.isLimited);
 
       if (allGranted) {
         return true;
       }
 
       List<Permission> permissionsToRequest = [];
-      
+
       if (!bluetoothScanStatus.isGranted && !bluetoothScanStatus.isLimited) {
         permissionsToRequest.add(Permission.bluetoothScan);
       }
-      if (!bluetoothConnectStatus.isGranted && !bluetoothConnectStatus.isLimited) {
+      if (!bluetoothConnectStatus.isGranted &&
+          !bluetoothConnectStatus.isLimited) {
         permissionsToRequest.add(Permission.bluetoothConnect);
       }
 
       if (permissionsToRequest.isNotEmpty) {
         await permissionsToRequest.request();
-        
-        final newBluetoothScanStatus = await Permission.bluetoothScan.status;
-        final newBluetoothConnectStatus = await Permission.bluetoothConnect.status;
 
-        allGranted = (newBluetoothScanStatus.isGranted || newBluetoothScanStatus.isLimited) &&
-            (newBluetoothConnectStatus.isGranted || newBluetoothConnectStatus.isLimited);
+        final newBluetoothScanStatus = await Permission.bluetoothScan.status;
+        final newBluetoothConnectStatus =
+            await Permission.bluetoothConnect.status;
+
+        allGranted =
+            (newBluetoothScanStatus.isGranted ||
+                newBluetoothScanStatus.isLimited) &&
+            (newBluetoothConnectStatus.isGranted ||
+                newBluetoothConnectStatus.isLimited);
       }
 
       if (!allGranted) {
         if (mounted) {
-          _showPermissionDialog('Bluetooth permission is required to scan for Haven devices.');
+          _showPermissionDialog(
+            'Bluetooth permission is required to scan for Haven devices.',
+          );
         }
         return false;
       }
@@ -456,9 +629,11 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _startProvisioning() async {
-    // Check if location ID is provided
-    if (_locationId.trim().isEmpty) {
-      _showErrorDialog('Location ID is required. Please go to Scan Settings and enter a Location ID.');
+    // Check if custom location ID is required but not provided
+    if (!_autoLocationMode && _customLocationId.trim().isEmpty) {
+      _showErrorDialog(
+        'Custom Location ID is required. Please go to Scan Settings and enter a Location ID.',
+      );
       return;
     }
 
@@ -468,7 +643,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // Get the bearer token from auth state
     final authState = AuthState();
     final bearerToken = authState.token;
-    
+
     if (bearerToken == null || bearerToken.isEmpty) {
       _showErrorDialog('Not authenticated. Please sign in again.');
       return;
@@ -478,18 +653,19 @@ class _HomeScreenState extends State<HomeScreen> {
       _logMessages.clear();
       _isProvisioningRunning = true;
     });
-    
-    // Start/resume scanning - provisioning will auto-trigger when strong device found
-    if (!_isScanning) {
-      _startDeviceScan();
-    }
-    
+
+    // Refresh the nearby devices list
+    _refreshDeviceScan();
+
     // Immediately check if there's already a device with strong signal
-    _checkForAutoProvisioning();
+    Future.delayed(const Duration(milliseconds: 500), () {
+      _checkForAutoProvisioning();
+    });
   }
 
   void _stopProvisioning() {
     _provisioningService.stopProvisioningLoop();
+    _cancelProximityCountdown();
     setState(() {
       _isProvisioningRunning = false;
       _connectedDeviceId = null;
@@ -503,8 +679,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void _showScanSettingsDialog() {
     final ssidController = TextEditingController(text: _wifiSsid);
     final passwordController = TextEditingController(text: _wifiPassword);
-    final locationIdController = TextEditingController(text: _locationId);
+    final customLocationIdController = TextEditingController(
+      text: _customLocationId,
+    );
     bool obscurePassword = true;
+    int rssiThreshold = _rssiThreshold;
+    bool autoLocationMode = _autoLocationMode;
 
     showDialog(
       context: context,
@@ -551,7 +731,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                
+
                 // WiFi Password
                 TextField(
                   controller: passwordController,
@@ -562,10 +742,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     labelStyle: TextStyle(color: Colors.grey.shade400),
                     hintText: 'Enter WiFi password',
                     hintStyle: TextStyle(color: Colors.grey.shade600),
-                    prefixIcon: Icon(Icons.lock_outline, color: Colors.grey.shade400),
+                    prefixIcon: Icon(
+                      Icons.lock_outline,
+                      color: Colors.grey.shade400,
+                    ),
                     suffixIcon: IconButton(
                       icon: Icon(
-                        obscurePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                        obscurePassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
                         color: Colors.grey.shade400,
                       ),
                       onPressed: () {
@@ -583,25 +768,287 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 16),
-                
-                // Location ID
-                TextField(
-                  controller: locationIdController,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    labelText: 'Location ID *',
-                    labelStyle: TextStyle(color: Colors.grey.shade400),
-                    hintText: 'Enter location ID (required)',
-                    hintStyle: TextStyle(color: Colors.grey.shade600),
-                    prefixIcon: Icon(Icons.location_on_outlined, color: Colors.grey.shade400),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
+
+                // RSSI Threshold Setting
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 8),
+                    child: Text(
+                      'RSSI Threshold',
+                      style: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                    filled: true,
-                    fillColor: const Color(0xFF2A2A3C),
                   ),
                 ),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A2A3C),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.signal_cellular_alt,
+                            color: rssiThreshold >= -35 
+                                ? const Color(0xFF22C55E) 
+                                : rssiThreshold >= -60 
+                                    ? const Color(0xFFFBBF24) 
+                                    : const Color(0xFFEF4444),
+                            size: 22,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              '$rssiThreshold dBm',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            rssiThreshold >= -35 
+                                ? 'Very Close' 
+                                : rssiThreshold >= -50 
+                                    ? 'Close' 
+                                    : rssiThreshold >= -70 
+                                        ? 'Medium' 
+                                        : 'Far',
+                            style: TextStyle(
+                              color: rssiThreshold >= -35 
+                                  ? const Color(0xFF22C55E) 
+                                  : rssiThreshold >= -60 
+                                      ? const Color(0xFFFBBF24) 
+                                      : const Color(0xFFEF4444),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SliderTheme(
+                        data: SliderThemeData(
+                          activeTrackColor: rssiThreshold >= -35 
+                              ? const Color(0xFF22C55E) 
+                              : rssiThreshold >= -60 
+                                  ? const Color(0xFFFBBF24) 
+                                  : const Color(0xFFEF4444),
+                          inactiveTrackColor: Colors.grey.shade700,
+                          thumbColor: Colors.white,
+                          overlayColor: const Color(0xFF8B5CF6).withOpacity(0.2),
+                          trackHeight: 4,
+                        ),
+                        child: Slider(
+                          value: rssiThreshold.toDouble(),
+                          min: -99,
+                          max: -25,
+                          divisions: 74,
+                          onChanged: (value) {
+                            setDialogState(() {
+                              rssiThreshold = value.round();
+                            });
+                          },
+                        ),
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            '-99 dBm',
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 10,
+                            ),
+                          ),
+                          Text(
+                            '-25 dBm',
+                            style: TextStyle(
+                              color: Colors.grey.shade600,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Device must have signal ≥ $rssiThreshold dBm to auto-connect',
+                    style: TextStyle(
+                      color: Colors.grey.shade500,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // Location label
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 4, bottom: 8),
+                    child: Text(
+                      'Location',
+                      style: TextStyle(
+                        color: Colors.grey.shade400,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ),
+
+                // Location ID Mode Dropdown - Styled like a TextField
+                Container(
+                  height: 56,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2A2A3C),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 40,
+                        alignment: Alignment.center,
+                        child: Icon(
+                          autoLocationMode
+                              ? Icons.auto_awesome
+                              : Icons.location_on_outlined,
+                          color: autoLocationMode
+                              ? const Color(0xFF8B5CF6)
+                              : Colors.grey.shade400,
+                          size: 22,
+                        ),
+                      ),
+                      Expanded(
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<bool>(
+                            value: autoLocationMode,
+                            isExpanded: true,
+                            icon: Icon(
+                              Icons.keyboard_arrow_down_rounded,
+                              color: Colors.grey.shade400,
+                            ),
+                            dropdownColor: const Color(0xFF2A2A3C),
+                            borderRadius: BorderRadius.circular(12),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                            ),
+                            items: [
+                              DropdownMenuItem(
+                                value: true,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.auto_awesome,
+                                      color: const Color(0xFF8B5CF6),
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Text('Auto'),
+                                  ],
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: false,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.location_on_outlined,
+                                      color: Colors.grey.shade400,
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Text('Custom Location ID'),
+                                  ],
+                                ),
+                              ),
+                            ],
+                            selectedItemBuilder: (context) => [
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Auto',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Custom Location ID',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            onChanged: (value) {
+                              setDialogState(() {
+                                autoLocationMode = value ?? true;
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Auto mode explanation
+                if (autoLocationMode)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'X-Mini → Location: Xmini\nX-Series → Location: Xseries',
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+
+                // Custom Location ID (only shown when Custom is selected)
+                if (!autoLocationMode) ...[
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: customLocationIdController,
+                    style: const TextStyle(color: Colors.white),
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText: 'Custom Location ID *',
+                      labelStyle: TextStyle(color: Colors.grey.shade400),
+                      hintText: 'Enter location ID',
+                      hintStyle: TextStyle(color: Colors.grey.shade600),
+                      prefixIcon: Icon(
+                        Icons.pin_drop_outlined,
+                        color: Colors.grey.shade400,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: const Color(0xFF2A2A3C),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -618,12 +1065,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 setState(() {
                   _wifiSsid = ssidController.text;
                   _wifiPassword = passwordController.text;
-                  _locationId = locationIdController.text;
+                  _rssiThreshold = rssiThreshold;
+                  _autoLocationMode = autoLocationMode;
+                  _customLocationId = customLocationIdController.text;
                 });
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: const Text('Settings saved'),
+                    content: Text(
+                      'Settings saved (RSSI: $rssiThreshold dBm)',
+                    ),
                     backgroundColor: const Color(0xFF22C55E),
                     behavior: SnackBarBehavior.floating,
                     shape: RoundedRectangleBorder(
@@ -637,11 +1088,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 12,
+                ),
               ),
               child: const Text(
                 'Save',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
           ],
@@ -655,9 +1112,7 @@ class _HomeScreenState extends State<HomeScreen> {
       context: context,
       builder: (context) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E2D),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: const Row(
           children: [
             Icon(Icons.bluetooth_disabled, color: Color(0xFFEF4444), size: 28),
@@ -665,7 +1120,11 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: Text(
                 'Permission Required',
-                style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
             ),
           ],
@@ -677,7 +1136,10 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.7))),
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white.withOpacity(0.7)),
+            ),
           ),
           TextButton(
             onPressed: () {
@@ -686,9 +1148,14 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             style: TextButton.styleFrom(
               backgroundColor: const Color(0xFF8B5CF6),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
-            child: const Text('Settings', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              'Settings',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -705,7 +1172,14 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Icon(Icons.bluetooth_disabled, color: Color(0xFFEF4444), size: 28),
             SizedBox(width: 12),
-            Text('Bluetooth Off', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            Text(
+              'Bluetooth Off',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         content: Text(
@@ -717,7 +1191,9 @@ class _HomeScreenState extends State<HomeScreen> {
             onPressed: () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(
               backgroundColor: const Color(0xFF8B5CF6),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             child: const Text('OK', style: TextStyle(color: Colors.white)),
           ),
@@ -736,16 +1212,28 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Icon(Icons.error_outline, color: Color(0xFFEF4444), size: 28),
             SizedBox(width: 12),
-            Text('Error', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            Text(
+              'Error',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
-        content: Text(message, style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 16)),
+        content: Text(
+          message,
+          style: TextStyle(color: Colors.white.withOpacity(0.8), fontSize: 16),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             style: TextButton.styleFrom(
               backgroundColor: const Color(0xFF8B5CF6),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             child: const Text('OK', style: TextStyle(color: Colors.white)),
           ),
@@ -754,11 +1242,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _logout(BuildContext context) {
+  void _logout(BuildContext context) async {
     _provisioningService.stopProvisioningLoop();
-    AuthState().logout();
+    // Get the current email before logout (it will be saved by logout())
+    final currentEmail = AuthState().email;
+    await AuthState().logout();
+    if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const SignInScreen()),
+      MaterialPageRoute(builder: (context) => SignInScreen(initialEmail: currentEmail)),
       (route) => false,
     );
   }
@@ -773,7 +1264,14 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             Icon(Icons.logout_rounded, color: Color(0xFF8B5CF6), size: 28),
             SizedBox(width: 12),
-            Text('Log Out', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+            Text(
+              'Log Out',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ],
         ),
         content: Text(
@@ -783,7 +1281,10 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text('Cancel', style: TextStyle(color: Colors.white.withOpacity(0.7))),
+            child: Text(
+              'Cancel',
+              style: TextStyle(color: Colors.white.withOpacity(0.7)),
+            ),
           ),
           TextButton(
             onPressed: () {
@@ -792,7 +1293,9 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             style: TextButton.styleFrom(
               backgroundColor: const Color(0xFFEF4444),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             child: const Text('Log Out', style: TextStyle(color: Colors.white)),
           ),
@@ -855,7 +1358,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final isRunning = _isProvisioningRunning;
-    
+
     return Stack(
       children: [
         Scaffold(
@@ -864,7 +1367,11 @@ class _HomeScreenState extends State<HomeScreen> {
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xFF1A1A2E), Color(0xFF0F0F1E), Color(0xFF0A0A14)],
+                colors: [
+                  Color(0xFF1A1A2E),
+                  Color(0xFF0F0F1E),
+                  Color(0xFF0A0A14),
+                ],
               ),
             ),
             child: SafeArea(
@@ -872,303 +1379,463 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
                   // App Bar with Provisioning Title & Status
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 12,
+                    ),
                     child: Row(
                       children: [
                         GestureDetector(
                           onTap: () => _openMenuScreen(context),
-                          child: Image.asset('assets/images/nikko.png', height: 32),
+                          child: Image.asset(
+                            'assets/images/nikko.png',
+                            height: 32,
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Center(
                             child: const Text(
                               'Provisioning',
-                              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
-                            ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    IconButton(
-                      onPressed: () => _showLogoutConfirmation(context),
-                      icon: const Icon(Icons.logout_rounded, color: Colors.white70, size: 24),
-                      tooltip: 'Logout',
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 8),
-
-              // Bluetooth Devices List
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1E1E2D),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white.withOpacity(0.1)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  'Nearby Devices',
-                                  style: TextStyle(
-                                    color: Colors.white.withOpacity(0.9),
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 18,
-                                  ),
-                                ),
-                                if (_isScanning) ...[
-                                  const SizedBox(width: 12),
-                                  SizedBox(
-                                    width: 36,
-                                    height: 36,
-                                    child: Lottie.asset(
-                                      'assets/lottie/bluescan.json',
-                                      fit: BoxFit.contain,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            IconButton(
-                              onPressed: _refreshDeviceScan,
-                              icon: Icon(
-                                Icons.refresh,
-                                color: Colors.white.withOpacity(0.7),
-                                size: 20,
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
                               ),
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(),
                             ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        Expanded(
-                          child: Builder(
-                            builder: (context) {
-                              // Filter to only Haven devices
-                              final havenDevices = _discoveredDevices.entries
-                                  .where((entry) {
-                                    final result = entry.value;
-                                    final deviceName = result.device.platformName.isNotEmpty 
-                                        ? result.device.platformName 
-                                        : result.advertisementData.advName;
-                                    return _provisioningService.isHavenDevice(deviceName);
-                                  })
-                                  .toList()
-                                ..sort((a, b) => b.value.rssi.compareTo(a.value.rssi));
-                              
-                              if (havenDevices.isEmpty) {
-                                return Center(
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.bluetooth_searching,
-                                        size: 48,
-                                        color: Colors.white.withOpacity(0.2),
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Text(
-                                        'Scanning for Haven devices...',
-                                        style: TextStyle(color: Colors.white.withOpacity(0.3)),
-                                      ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        'Looking for devices starting with HVN or Haven',
-                                        style: TextStyle(
-                                          color: Colors.white.withOpacity(0.2),
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                );
-                              }
-                              
-                              return ListView.builder(
-                                itemCount: havenDevices.length,
-                                itemBuilder: (context, index) {
-                                  final deviceId = havenDevices[index].key;
-                                  final result = havenDevices[index].value;
-                                  final deviceName = result.device.platformName.isNotEmpty 
-                                      ? result.device.platformName 
-                                      : result.advertisementData.advName.isNotEmpty
-                                          ? result.advertisementData.advName
-                                          : 'Unknown Device';
-                                  final rssi = result.rssi;
-                                  final isConnected = _connectedDeviceId == deviceId;
-                                  final isStrongSignal = rssi >= -25 || isConnected;
-                                  
-                                  return Container(
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                    decoration: BoxDecoration(
-                                      color: isStrongSignal 
-                                          ? const Color(0xFF22C55E).withOpacity(0.15)
-                                          : const Color(0xFF8B5CF6).withOpacity(0.15),
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: Border.all(
-                                        color: isStrongSignal 
-                                            ? const Color(0xFF22C55E).withOpacity(0.5)
-                                            : const Color(0xFF8B5CF6).withOpacity(0.3),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          isConnected ? Icons.lightbulb : Icons.lightbulb_outline,
-                                          color: isStrongSignal ? const Color(0xFF22C55E) : const Color(0xFF8B5CF6),
-                                          size: 18,
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Column(
-                                            crossAxisAlignment: CrossAxisAlignment.start,
-                                            children: [
-                                              Text(
-                                                deviceName,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 13,
-                                                  fontWeight: FontWeight.w600,
-                                                ),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                              Text(
-                                                result.device.remoteId.toString(),
-                                                style: TextStyle(
-                                                  color: Colors.white.withOpacity(0.5),
-                                                  fontSize: 10,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ),
-                                        _buildRssiIndicator(rssi, isConnected: isConnected),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              );
-                            },
                           ),
+                        ),
+                        const SizedBox(width: 12),
+                        IconButton(
+                          onPressed: () => _showLogoutConfirmation(context),
+                          icon: const Icon(
+                            Icons.logout_rounded,
+                            color: Colors.white70,
+                            size: 24,
+                          ),
+                          tooltip: 'Logout',
                         ),
                       ],
                     ),
                   ),
-                ),
-              ),
 
-              const SizedBox(height: 16),
+                  const SizedBox(height: 8),
 
-              // Start/Stop Button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Column(
-                  children: [
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: ElevatedButton.icon(
-                        onPressed: isRunning 
-                            ? _stopProvisioning 
-                            : (_locationId.trim().isEmpty ? null : _startProvisioning),
-                        icon: Icon(
-                          isRunning ? Icons.stop_rounded : Icons.play_arrow_rounded,
-                          size: 28,
+                  // Bluetooth Devices List
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 500),
+                        curve: Curves.easeInOut,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: _isProvisioningRunning
+                              ? const Color(0xFF2D1E1E) // Dark red
+                              : const Color(0xFF1E1E2D), // Purple
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: _isProvisioningRunning
+                                ? const Color(0xFFEF4444).withOpacity(0.2)
+                                : Colors.white.withOpacity(0.1),
+                          ),
                         ),
-                        label: Text(
-                          isRunning ? 'Stop Provisioning' : 'Start Provisioning',
-                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: isRunning 
-                              ? const Color(0xFFEF4444) 
-                              : (_locationId.trim().isEmpty 
-                                  ? Colors.grey.shade700 
-                                  : const Color(0xFF22C55E)),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          elevation: 0,
-                        ),
-                      ),
-                    ),
-                    if (_locationId.trim().isEmpty && !isRunning)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.warning_amber_rounded, size: 16, color: Colors.amber.shade400),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Location ID required - Set in Scan Settings',
-                              style: TextStyle(
-                                color: Colors.amber.shade400,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      'Nearby Devices',
+                                      style: TextStyle(
+                                        color: Colors.white.withOpacity(0.9),
+                                        fontWeight: FontWeight.w600,
+                                        fontSize: 18,
+                                      ),
+                                    ),
+                                    if (_isProvisioningRunning && _isScanning) ...[
+                                      const SizedBox(width: 12),
+                                      SizedBox(
+                                        width: 36,
+                                        height: 36,
+                                        child: Lottie.asset(
+                                          'assets/lottie/provision.json',
+                                          fit: BoxFit.contain,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                IconButton(
+                                  onPressed: _refreshDeviceScan,
+                                  icon: Icon(
+                                    Icons.refresh,
+                                    color: Colors.white.withOpacity(0.7),
+                                    size: 20,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Expanded(
+                              child: Builder(
+                                builder: (context) {
+                                  // Filter to only Haven devices with valid (negative) RSSI values
+                                  final havenDevices =
+                                      _discoveredDevices.entries.where((entry) {
+                                        final result = entry.value;
+                                        final deviceName =
+                                            result
+                                                .device
+                                                .platformName
+                                                .isNotEmpty
+                                            ? result.device.platformName
+                                            : result.advertisementData.advName;
+                                        // Exclude devices with positive dBm (invalid readings)
+                                        if (result.rssi >= 0) {
+                                          return false;
+                                        }
+                                        return _provisioningService
+                                            .isHavenDevice(deviceName);
+                                      }).toList()..sort(
+                                        (a, b) => b.value.rssi.compareTo(
+                                          a.value.rssi,
+                                        ),
+                                      );
+
+                                  if (havenDevices.isEmpty) {
+                                    return Center(
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        children: [
+                                          Icon(
+                                            Icons.bluetooth_searching,
+                                            size: 48,
+                                            color: Colors.white.withOpacity(
+                                              0.2,
+                                            ),
+                                          ),
+                                          const SizedBox(height: 12),
+                                          Text(
+                                            'Scanning for Haven devices...',
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.3,
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            'Looking for devices starting with HVN or Haven',
+                                            style: TextStyle(
+                                              color: Colors.white.withOpacity(
+                                                0.2,
+                                              ),
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }
+
+                                  return ListView.builder(
+                                    itemCount: havenDevices.length,
+                                    itemBuilder: (context, index) {
+                                      final deviceId = havenDevices[index].key;
+                                      final result = havenDevices[index].value;
+                                      final deviceName =
+                                          result.device.platformName.isNotEmpty
+                                          ? result.device.platformName
+                                          : result
+                                                .advertisementData
+                                                .advName
+                                                .isNotEmpty
+                                          ? result.advertisementData.advName
+                                          : 'Unknown Device';
+                                      final rssi = result.rssi;
+                                      final isConnected =
+                                          _connectedDeviceId == deviceId;
+                                      final isStrongSignal =
+                                          rssi >= _rssiThreshold || isConnected;
+
+                                      return Container(
+                                        margin: const EdgeInsets.only(
+                                          bottom: 10,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 16,
+                                          vertical: 16,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: isStrongSignal
+                                              ? const Color(
+                                                  0xFF22C55E,
+                                                ).withOpacity(0.15)
+                                              : const Color(
+                                                  0xFF8B5CF6,
+                                                ).withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
+                                          border: Border.all(
+                                            color: isStrongSignal
+                                                ? const Color(
+                                                    0xFF22C55E,
+                                                  ).withOpacity(0.5)
+                                                : const Color(
+                                                    0xFF8B5CF6,
+                                                  ).withOpacity(0.3),
+                                          ),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Icon(
+                                              isConnected
+                                                  ? Icons.lightbulb
+                                                  : Icons.lightbulb_outline,
+                                              color: isStrongSignal
+                                                  ? const Color(0xFF22C55E)
+                                                  : const Color(0xFF8B5CF6),
+                                              size: 18,
+                                            ),
+                                            const SizedBox(width: 10),
+                                            Expanded(
+                                              child: Text(
+                                                deviceName,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 16,
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                            _buildRssiIndicator(
+                                              rssi,
+                                              isConnected: isConnected,
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  );
+                                },
                               ),
                             ),
                           ],
                         ),
                       ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // Scan Settings Button
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 48,
-                  child: OutlinedButton.icon(
-                    onPressed: isRunning ? null : _showScanSettingsDialog,
-                    icon: const Icon(Icons.settings, size: 20),
-                    label: const Text(
-                      'Scan Settings',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                    ),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFF8B5CF6),
-                      side: BorderSide(
-                        color: isRunning ? Colors.grey.shade700 : const Color(0xFF8B5CF6),
-                      ),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      disabledForegroundColor: Colors.grey.shade600,
                     ),
                   ),
-                ),
-              ),
 
-              const SizedBox(height: 20),
-            ],
+                  const SizedBox(height: 16),
+
+                  // Start/Stop Button
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      children: [
+                        SizedBox(
+                          width: double.infinity,
+                          height: 56,
+                          child: isRunning
+                              ? ElevatedButton.icon(
+                                  onPressed: _stopProvisioning,
+                                  icon: const Icon(
+                                    Icons.stop_rounded,
+                                    size: 28,
+                                  ),
+                                  label: const Text(
+                                    'Stop Provisioning',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFFEF4444),
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    elevation: 0,
+                                  ),
+                                )
+                              : OutlinedButton.icon(
+                                  onPressed:
+                                      (!_autoLocationMode &&
+                                          _customLocationId.trim().isEmpty)
+                                      ? null
+                                      : _startProvisioning,
+                                  icon: const Icon(
+                                    Icons.play_arrow_rounded,
+                                    size: 28,
+                                  ),
+                                  label: const Text(
+                                    'Start Provisioning',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor:
+                                        (!_autoLocationMode &&
+                                            _customLocationId.trim().isEmpty)
+                                        ? Colors.grey.shade600
+                                        : const Color(0xFF22C55E),
+                                    side: BorderSide(
+                                      color:
+                                          (!_autoLocationMode &&
+                                              _customLocationId.trim().isEmpty)
+                                          ? Colors.grey.shade700
+                                          : const Color(0xFF22C55E),
+                                      width: 2,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                  ),
+                                ),
+                        ),
+                        if (!_autoLocationMode &&
+                            _customLocationId.trim().isEmpty &&
+                            !isRunning)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.warning_amber_rounded,
+                                  size: 16,
+                                  color: Colors.amber.shade400,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'Custom Location ID required - Set in Scan Settings',
+                                  style: TextStyle(
+                                    color: Colors.amber.shade400,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  // Scan Settings Button
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: SizedBox(
+                      width: double.infinity,
+                      height: 48,
+                      child: OutlinedButton.icon(
+                        onPressed: isRunning ? null : _showScanSettingsDialog,
+                        icon: const Icon(Icons.settings, size: 20),
+                        label: const Text(
+                          'Scan Settings',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF8B5CF6),
+                          side: BorderSide(
+                            color: isRunning
+                                ? Colors.grey.shade700
+                                : const Color(0xFF8B5CF6),
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          disabledForegroundColor: Colors.grey.shade600,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+                ],
+              ),
+            ),
           ),
         ),
-      ),
-    ),
-        
+
         // Provisioning Overlay (deviceadding.json)
-        if (_showProvisioningOverlay)
-          _buildProvisioningOverlay(),
-        
+        if (_showProvisioningOverlay) _buildProvisioningOverlay(),
+
         // Success Overlay (connected.json)
-        if (_showSuccessOverlay)
-          _buildSuccessOverlay(),
+        if (_showSuccessOverlay) _buildSuccessOverlay(),
+
+        // Close Proximity Countdown Overlay (close.json)
+        if (_showCloseProximityOverlay) _buildCloseProximityOverlay(),
       ],
+    );
+  }
+
+  Widget _buildCloseProximityOverlay() {
+    return Container(
+      color: const Color(0xFF0A0A14).withOpacity(0.95),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 200,
+              height: 200,
+              child: Lottie.asset(
+                'assets/lottie/close.json',
+                fit: BoxFit.contain,
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              _proximityDeviceName ?? 'Device',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                decoration: TextDecoration.none,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '$_proximityCountdownSeconds',
+              style: const TextStyle(
+                color: Color(0xFF22C55E),
+                fontSize: 48,
+                fontWeight: FontWeight.bold,
+                decoration: TextDecoration.none,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Keep device close',
+              style: TextStyle(
+                color: Colors.white.withOpacity(0.6),
+                fontSize: 14,
+                fontWeight: FontWeight.normal,
+                decoration: TextDecoration.none,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1189,7 +1856,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 24),
             const Text(
-              'Adding Device',
+              'Adding',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 24,
@@ -1197,6 +1864,41 @@ class _HomeScreenState extends State<HomeScreen> {
                 decoration: TextDecoration.none,
               ),
             ),
+            const SizedBox(height: 16),
+            // Device type with last 4 MAC digits (e.g., "X-Series :CB1C")
+            if (_currentDeviceInfo != null) ...[
+              Text(
+                '${_currentDeviceInfo!.deviceType} :${_currentDeviceInfo!.last4Mac}',
+                style: const TextStyle(
+                  color: Color(0xFF8B5CF6),
+                  fontSize: 40,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+              const SizedBox(height: 12),
+              // Firmware version
+              Text(
+                'Firmware: ${_currentDeviceInfo!.firmwareVersion}',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.8),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ] else ...[
+              // Fallback if no device info yet
+              Text(
+                'Connecting...',
+                style: TextStyle(
+                  color: Colors.white.withOpacity(0.6),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w500,
+                  decoration: TextDecoration.none,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1240,11 +1942,7 @@ class _HomeScreenState extends State<HomeScreen> {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(
-            Icons.check_circle,
-            color: Color(0xFF22C55E),
-            size: 16,
-          ),
+          const Icon(Icons.check_circle, color: Color(0xFF22C55E), size: 16),
           const SizedBox(width: 4),
           const Text(
             'CONNECTED',
@@ -1257,11 +1955,11 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       );
     }
-    
+
     Color color;
     int bars;
-    
-    if (rssi >= -25) {
+
+    if (rssi >= _rssiThreshold) {
       color = const Color(0xFF22C55E); // Green - excellent (provisioning range)
       bars = 4;
     } else if (rssi >= -50) {
@@ -1274,7 +1972,7 @@ class _HomeScreenState extends State<HomeScreen> {
       color = const Color(0xFFEF4444); // Red - weak
       bars = 1;
     }
-    
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [

@@ -16,6 +16,7 @@ class AuthState extends ChangeNotifier {
   static const _userIdKey = 'user_id';
   static const _emailKey = 'user_email';
   static const _passwordKey = 'user_password';
+  static const _lastEmailKey = 'last_user_email'; // Persists after logout
 
   String? _token;
   String? _refreshToken;
@@ -113,19 +114,41 @@ class AuthState extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // Save the last email before clearing (for auto-fill on next login)
+    final lastEmail = _email;
+    
     _token = null;
     _refreshToken = null;
     _userId = null;
     _email = null;
     _password = null;
 
-    // Clear from secure storage
+    // Clear from secure storage but preserve last email
     try {
-      await _storage.deleteAll();
+      await _storage.delete(key: _tokenKey);
+      await _storage.delete(key: _refreshTokenKey);
+      await _storage.delete(key: _userIdKey);
+      await _storage.delete(key: _emailKey);
+      await _storage.delete(key: _passwordKey);
+      
+      // Save the last email for auto-fill
+      if (lastEmail != null) {
+        await _storage.write(key: _lastEmailKey, value: lastEmail);
+      }
     } catch (e) {
       debugPrint('Error clearing credentials: $e');
     }
 
     notifyListeners();
+  }
+
+  /// Get the last email used (persists after logout for auto-fill)
+  Future<String?> getLastEmail() async {
+    try {
+      return await _storage.read(key: _lastEmailKey);
+    } catch (e) {
+      debugPrint('Error reading last email: $e');
+      return null;
+    }
   }
 }
