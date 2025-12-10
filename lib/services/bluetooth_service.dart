@@ -11,7 +11,7 @@ const havenCharacteristicUuid = '0000000B-8C26-476F-89A7-A108033A69C7';
 const rssiThreshold = -25;
 
 // Hardcoded WiFi credentials
-const wifiSsid = 'shopHaven iOT';
+const wifiSsid = 'Hav3n Production_IoT';
 const wifiPassword = '12345678';
 
 /// Manages a single BLE connection to a Haven controller

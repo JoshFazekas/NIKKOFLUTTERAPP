@@ -14,7 +14,7 @@ const rssiMinThreshold = -25; // Weakest acceptable signal
 const rssiMaxThreshold = -10; // Strongest acceptable signal
 
 // Default WiFi credentials
-const defaultWifiSsid = 'shopHaven iOT';
+const defaultWifiSsid = 'Hav3n Production_IoT';
 const defaultWifiPassword = '12345678';
 
 // Device announce URL (hardcoded for production)
@@ -28,6 +28,7 @@ const addDeviceToLocationUrl =
 // Auto location IDs based on device type
 const autoLocationIdXmini = '28599';
 const autoLocationIdXseries = '28600';
+const autoLocationIdXpoe = '28724';
 
 /// Status updates for the provisioning process
 enum ProvisioningStatus {
@@ -854,9 +855,19 @@ class ProvisioningService {
   }
 
   /// Get auto location ID based on device type
-  /// X-MINI = 28599, X-SERIES = 28600
+  /// X-MINI = 28599, X-SERIES = 28600, X-POE = 28724
   String _getAutoLocationId(String deviceName) {
     final upperName = deviceName.toUpperCase();
+
+    // Check for X-POE (location ID = 28724)
+    if (upperName.contains('X-POE') ||
+        upperName.contains('XPOE') ||
+        upperName.contains('X POE')) {
+      _addMessage(
+        '✓ Detected X-POE → Auto Location ID: $autoLocationIdXpoe',
+      );
+      return autoLocationIdXpoe;
+    }
 
     // Check for X-MINI (location ID = 28599)
     if (upperName.contains('X-MINI') ||
@@ -886,12 +897,20 @@ class ProvisioningService {
   }
 
   /// Get controllerTypeId based on Bluetooth device name
-  /// X-MINI = 10, X-SERIES = 8
+  /// X-MINI = 10, X-SERIES = 8, X-POE = 9
   int _getControllerTypeId(String deviceName) {
     final upperName = deviceName.toUpperCase();
     _addMessage(
       'Determining controller type for device: "$deviceName"',
     );
+
+    // Check for X-POE (controllerTypeId = 9)
+    if (upperName.contains('X-POE') ||
+        upperName.contains('XPOE') ||
+        upperName.contains('X POE')) {
+      _addMessage('✓ Detected X-POE → controllerTypeId: 9');
+      return 9;
+    }
 
     // Check for X-MINI (controllerTypeId = 10)
     if (upperName.contains('X-MINI') ||

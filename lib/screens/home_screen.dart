@@ -20,6 +20,13 @@ const int kDefaultProximityRssiThreshold = -25;
 const String _provisionedCountKey = 'provisioned_count_today';
 const String _provisionedCountDateKey = 'provisioned_count_date';
 
+/// Storage keys for scan settings
+const String _wifiSsidKey = 'scan_settings_wifi_ssid';
+const String _wifiPasswordKey = 'scan_settings_wifi_password';
+const String _rssiThresholdKey = 'scan_settings_rssi_threshold';
+const String _autoLocationModeKey = 'scan_settings_auto_location_mode';
+const String _customLocationIdKey = 'scan_settings_custom_location_id';
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -88,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadProvisionedCount();
+    _loadScanSettings();
     _setupListeners();
     _startDeviceScan();
   }
@@ -124,6 +132,52 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _storage.write(key: _provisionedCountKey, value: _provisionedCount.toString());
     } catch (e) {
       debugPrint('Error saving provisioned count: $e');
+    }
+  }
+
+  /// Load scan settings from storage
+  Future<void> _loadScanSettings() async {
+    try {
+      final ssid = await _storage.read(key: _wifiSsidKey);
+      final password = await _storage.read(key: _wifiPasswordKey);
+      final rssiStr = await _storage.read(key: _rssiThresholdKey);
+      final autoModeStr = await _storage.read(key: _autoLocationModeKey);
+      final customLocationId = await _storage.read(key: _customLocationIdKey);
+
+      if (mounted) {
+        setState(() {
+          if (ssid != null && ssid.isNotEmpty) {
+            _wifiSsid = ssid;
+          }
+          if (password != null && password.isNotEmpty) {
+            _wifiPassword = password;
+          }
+          if (rssiStr != null) {
+            _rssiThreshold = int.tryParse(rssiStr) ?? kDefaultProximityRssiThreshold;
+          }
+          if (autoModeStr != null) {
+            _autoLocationMode = autoModeStr == 'true';
+          }
+          if (customLocationId != null) {
+            _customLocationId = customLocationId;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading scan settings: $e');
+    }
+  }
+
+  /// Save scan settings to storage
+  Future<void> _saveScanSettings() async {
+    try {
+      await _storage.write(key: _wifiSsidKey, value: _wifiSsid);
+      await _storage.write(key: _wifiPasswordKey, value: _wifiPassword);
+      await _storage.write(key: _rssiThresholdKey, value: _rssiThreshold.toString());
+      await _storage.write(key: _autoLocationModeKey, value: _autoLocationMode.toString());
+      await _storage.write(key: _customLocationIdKey, value: _customLocationId);
+    } catch (e) {
+      debugPrint('Error saving scan settings: $e');
     }
   }
 
@@ -1134,6 +1188,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _autoLocationMode = autoLocationMode;
                   _customLocationId = customLocationIdController.text;
                 });
+                // Persist settings to storage
+                _saveScanSettings();
                 Navigator.of(context).pop();
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
