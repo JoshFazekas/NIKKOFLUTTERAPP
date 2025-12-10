@@ -5,12 +5,15 @@ import 'sign_in_screen.dart';
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({super.key});
 
-  void _logout(BuildContext context) {
-    AuthState().logout();
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (context) => const SignInScreen()),
-      (route) => false,
-    );
+  void _logout(BuildContext context) async {
+    final currentEmail = AuthState().email;
+    await AuthState().logout();
+    if (context.mounted) {
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => SignInScreen(initialEmail: currentEmail)),
+        (route) => false,
+      );
+    }
   }
 
   void _showLogoutConfirmation(BuildContext context) {

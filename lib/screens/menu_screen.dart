@@ -90,6 +90,34 @@ class MenuScreen extends StatelessWidget {
                   ],
                 ),
               ),
+              
+              const Spacer(),
+              
+              // App Version
+              Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      'App Version ',
+                      style: TextStyle(
+                        color: Colors.white.withOpacity(0.5),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    const Text(
+                      '1.0.1',
+                      style: TextStyle(
+                        color: Color(0xFF8B5CF6),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
