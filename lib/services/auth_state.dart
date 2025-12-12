@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthState extends ChangeNotifier {
   static final AuthState _instance = AuthState._internal();
@@ -17,6 +18,7 @@ class AuthState extends ChangeNotifier {
   static const _emailKey = 'user_email';
   static const _passwordKey = 'user_password';
   static const _lastEmailKey = 'last_user_email'; // Persists after logout
+  static const _hasLaunchedBeforeKey = 'has_launched_before';
 
   String? _token;
   String? _refreshToken;
@@ -30,6 +32,24 @@ class AuthState extends ChangeNotifier {
   String? get email => _email;
   String? get password => _password;
   bool get isLoggedIn => _token != null;
+
+  /// Clear keychain on fresh install (iOS Keychain persists after app uninstall)
+  /// Call this before loading stored credentials on app startup
+  Future<void> clearOnFreshInstall() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hasLaunchedBefore = prefs.getBool(_hasLaunchedBeforeKey) ?? false;
+      
+      if (!hasLaunchedBefore) {
+        // First launch after install - clear any stale keychain data
+        debugPrint('Fresh install detected - clearing keychain');
+        await _storage.deleteAll();
+        await prefs.setBool(_hasLaunchedBeforeKey, true);
+      }
+    } catch (e) {
+      debugPrint('Error checking fresh install: $e');
+    }
+  }
 
   /// Load stored credentials from secure storage
   Future<bool> loadStoredCredentials() async {

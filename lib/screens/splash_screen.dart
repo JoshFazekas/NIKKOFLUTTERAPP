@@ -25,6 +25,9 @@ class _SplashScreenState extends State<SplashScreen> {
     // Small delay to show splash screen
     await Future.delayed(const Duration(milliseconds: 500));
 
+    // Clear keychain on fresh install (iOS Keychain persists after uninstall)
+    await _authState.clearOnFreshInstall();
+
     // Check if we have stored credentials
     final hasCredentials = await _authState.loadStoredCredentials();
 

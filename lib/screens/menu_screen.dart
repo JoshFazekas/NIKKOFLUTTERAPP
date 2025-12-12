@@ -108,7 +108,7 @@ class MenuScreen extends StatelessWidget {
                       ),
                     ),
                     const Text(
-                      '1.0.1',
+                      '1.0.2',
                       style: TextStyle(
                         color: Color(0xFF8B5CF6),
                         fontSize: 16,
