@@ -7,15 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0095737D9AD2FD64A2C781DB /* Pods_Nikko_App.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A7942164170DAFD49D8538F7 /* Pods_Nikko_App.framework */; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		331C808B294A63AB00263BE5 /* RunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 331C807B294A618700263BE5 /* RunnerTests.swift */; };
 		3B3967161E833CAA004F5970 /* AppFrameworkInfo.plist in Resources */ = {isa = PBXBuildFile; fileRef = 3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */; };
+		4FDBE8BC2F58A1AFEB95E9FD /* Pods_Nikko_AppTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6DCA9BBCC5B387144E08EE17 /* Pods_Nikko_AppTests.framework */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
 		97C146FE1CF9000F007C117D /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FD1CF9000F007C117D /* Assets.xcassets */; };
 		97C147011CF9000F007C117D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */; };
-		A74B5E1AD23FC34C305BAF5C /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 324D2A28A212D227CC21C13F /* Pods_RunnerTests.framework */; };
-		C17F34A6818D351C0D5CA4DE /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B1288B83BD7CAA068C8B6B2E /* Pods_Runner.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -45,11 +45,15 @@
 		04ED3DECDE02FCB8BA3BFE99 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
 		1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = GeneratedPluginRegistrant.m; sourceTree = "<group>"; };
-		324D2A28A212D227CC21C13F /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		28A9E60A07B01D2D0068DA88 /* Pods-Nikko App.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Nikko App.release.xcconfig"; path = "Target Support Files/Pods-Nikko App/Pods-Nikko App.release.xcconfig"; sourceTree = "<group>"; };
+		2BC99469ABCFF149B5E0FB72 /* Pods-Nikko AppTests.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Nikko AppTests.profile.xcconfig"; path = "Target Support Files/Pods-Nikko AppTests/Pods-Nikko AppTests.profile.xcconfig"; sourceTree = "<group>"; };
 		331C807B294A618700263BE5 /* RunnerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunnerTests.swift; sourceTree = "<group>"; };
 		331C8081294A63A400263BE5 /* Nikko AppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Nikko AppTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		39AA265D1D469D6BA1ED2BE7 /* Pods-Nikko AppTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Nikko AppTests.release.xcconfig"; path = "Target Support Files/Pods-Nikko AppTests/Pods-Nikko AppTests.release.xcconfig"; sourceTree = "<group>"; };
 		3B3967151E833CAA004F5970 /* AppFrameworkInfo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = AppFrameworkInfo.plist; path = Flutter/AppFrameworkInfo.plist; sourceTree = "<group>"; };
+		40FD65BA42E716885F0B33C7 /* Pods-Nikko App.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Nikko App.debug.xcconfig"; path = "Target Support Files/Pods-Nikko App/Pods-Nikko App.debug.xcconfig"; sourceTree = "<group>"; };
 		476BD5ABA95AE273E367BCF0 /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
+		6DCA9BBCC5B387144E08EE17 /* Pods_Nikko_AppTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Nikko_AppTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		7AFA3C8E1D35360C0083082E /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = Release.xcconfig; path = Flutter/Release.xcconfig; sourceTree = "<group>"; };
@@ -61,10 +65,12 @@
 		97C146FD1CF9000F007C117D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		97C147001CF9000F007C117D /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		97C147021CF9000F007C117D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		B1288B83BD7CAA068C8B6B2E /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		A7942164170DAFD49D8538F7 /* Pods_Nikko_App.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Nikko_App.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		B33615B4ECBD91506E81772D /* Pods-RunnerTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.debug.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.debug.xcconfig"; sourceTree = "<group>"; };
+		D6A0A273ED399FF3E69538E4 /* Pods-Nikko AppTests.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Nikko AppTests.debug.xcconfig"; path = "Target Support Files/Pods-Nikko AppTests/Pods-Nikko AppTests.debug.xcconfig"; sourceTree = "<group>"; };
 		E1D91F7AEEFB6A75C3A8108B /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		EB347CAB6E5B430030125D6F /* Pods-RunnerTests.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-RunnerTests.release.xcconfig"; path = "Target Support Files/Pods-RunnerTests/Pods-RunnerTests.release.xcconfig"; sourceTree = "<group>"; };
+		EB72A4CB25D7D9E8EE21C095 /* Pods-Nikko App.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Nikko App.profile.xcconfig"; path = "Target Support Files/Pods-Nikko App/Pods-Nikko App.profile.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,7 +78,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A74B5E1AD23FC34C305BAF5C /* Pods_RunnerTests.framework in Frameworks */,
+				4FDBE8BC2F58A1AFEB95E9FD /* Pods_Nikko_AppTests.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -80,7 +86,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C17F34A6818D351C0D5CA4DE /* Pods_Runner.framework in Frameworks */,
+				0095737D9AD2FD64A2C781DB /* Pods_Nikko_App.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -151,6 +157,12 @@
 				B33615B4ECBD91506E81772D /* Pods-RunnerTests.debug.xcconfig */,
 				EB347CAB6E5B430030125D6F /* Pods-RunnerTests.release.xcconfig */,
 				962FD0D63F175B91051250F4 /* Pods-RunnerTests.profile.xcconfig */,
+				40FD65BA42E716885F0B33C7 /* Pods-Nikko App.debug.xcconfig */,
+				28A9E60A07B01D2D0068DA88 /* Pods-Nikko App.release.xcconfig */,
+				EB72A4CB25D7D9E8EE21C095 /* Pods-Nikko App.profile.xcconfig */,
+				D6A0A273ED399FF3E69538E4 /* Pods-Nikko AppTests.debug.xcconfig */,
+				39AA265D1D469D6BA1ED2BE7 /* Pods-Nikko AppTests.release.xcconfig */,
+				2BC99469ABCFF149B5E0FB72 /* Pods-Nikko AppTests.profile.xcconfig */,
 			);
 			path = Pods;
 			sourceTree = "<group>";
@@ -158,8 +170,8 @@
 		DBA74BAFEE3C9A26F01C8C94 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				B1288B83BD7CAA068C8B6B2E /* Pods_Runner.framework */,
-				324D2A28A212D227CC21C13F /* Pods_RunnerTests.framework */,
+				A7942164170DAFD49D8538F7 /* Pods_Nikko_App.framework */,
+				6DCA9BBCC5B387144E08EE17 /* Pods_Nikko_AppTests.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -285,7 +297,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(DERIVED_FILE_DIR)/Pods-Runner-checkManifestLockResult.txt",
+				"$(DERIVED_FILE_DIR)/Pods-Nikko App-checkManifestLockResult.txt",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -298,19 +310,15 @@
 			files = (
 			);
 			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			inputPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-Nikko App/Pods-Nikko App-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-Nikko App/Pods-Nikko App-frameworks-${CONFIGURATION}-output-files.xcfilelist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-frameworks.sh\"\n";
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Nikko App/Pods-Nikko App-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 		3B06AD1E1E4923F5004D2608 /* Thin Binary */ = {
@@ -344,7 +352,7 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(DERIVED_FILE_DIR)/Pods-RunnerTests-checkManifestLockResult.txt",
+				"$(DERIVED_FILE_DIR)/Pods-Nikko AppTests-checkManifestLockResult.txt",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -372,19 +380,15 @@
 			files = (
 			);
 			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			inputPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-Nikko App/Pods-Nikko App-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-Nikko App/Pods-Nikko App-resources-${CONFIGURATION}-output-files.xcfilelist",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Runner/Pods-Runner-resources.sh\"\n";
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Nikko App/Pods-Nikko App-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
@@ -499,6 +503,7 @@
 				DEVELOPMENT_TEAM = YF73385RG6;
 				ENABLE_BITCODE = NO;
 				FLUTTER_BUILD_NAME = 1.0.2;
+				FLUTTER_BUILD_NUMBER = 2;
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Nikko App";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
@@ -517,7 +522,7 @@
 		};
 		331C8088294A63A400263BE5 /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = B33615B4ECBD91506E81772D /* Pods-RunnerTests.debug.xcconfig */;
+			baseConfigurationReference = D6A0A273ED399FF3E69538E4 /* Pods-Nikko AppTests.debug.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -535,7 +540,7 @@
 		};
 		331C8089294A63A400263BE5 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = EB347CAB6E5B430030125D6F /* Pods-RunnerTests.release.xcconfig */;
+			baseConfigurationReference = 39AA265D1D469D6BA1ED2BE7 /* Pods-Nikko AppTests.release.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -551,7 +556,7 @@
 		};
 		331C808A294A63A400263BE5 /* Profile */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 962FD0D63F175B91051250F4 /* Pods-RunnerTests.profile.xcconfig */;
+			baseConfigurationReference = 2BC99469ABCFF149B5E0FB72 /* Pods-Nikko AppTests.profile.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
@@ -686,6 +691,7 @@
 				DEVELOPMENT_TEAM = YF73385RG6;
 				ENABLE_BITCODE = NO;
 				FLUTTER_BUILD_NAME = 1.0.2;
+				FLUTTER_BUILD_NUMBER = 2;
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Nikko App";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
@@ -713,6 +719,7 @@
 				DEVELOPMENT_TEAM = YF73385RG6;
 				ENABLE_BITCODE = NO;
 				FLUTTER_BUILD_NAME = 1.0.2;
+				FLUTTER_BUILD_NUMBER = 2;
 				INFOPLIST_FILE = Runner/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Nikko App";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.business";
