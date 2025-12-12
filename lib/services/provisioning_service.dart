@@ -25,10 +25,26 @@ const deviceAnnounceUrl =
 const addDeviceToLocationUrl =
     'https://stg-api.havenlighting.com/api/Devices/AddDeviceToLocation';
 
-// Auto location IDs based on device type
+// Auto location IDs based on device type (Nikko mode)
 const autoLocationIdXmini = '28599';
 const autoLocationIdXseries = '28600';
 const autoLocationIdXpoe = '28724';
+
+// Chase production location IDs
+const chaseLocationIdXmini = '28755';
+const chaseLocationIdXseries = '28757';
+const chaseLocationIdXpoe = '28756';
+
+// Dev location IDs
+const devLocationIdXmini = '28758';
+const devLocationIdXseries = '28760';
+const devLocationIdXpoe = '28759';
+
+// Location mode options
+const locationModeNikko = 'nikko';
+const locationModeChase = 'chase';
+const locationModeDev = 'dev';
+const locationModeCustom = 'custom';
 
 /// Status updates for the provisioning process
 enum ProvisioningStatus {
@@ -253,7 +269,7 @@ class ProvisioningService {
   Future<void> provisionDevice({
     required ScanResult scanResult,
     required String bearerToken,
-    bool autoLocationMode = true,
+    String locationMode = locationModeNikko,
     String? customLocationId,
     String? ssid,
     String? wifiPassword,
@@ -283,16 +299,26 @@ class ProvisioningService {
 
       // Determine location ID based on mode and device type
       String locationId;
-      if (autoLocationMode) {
-        locationId = _getAutoLocationId(deviceName);
+      if (locationMode == locationModeNikko) {
+        locationId = _getLocationIdForMode(deviceName, locationModeNikko);
         _addMessage(
-          'Auto location mode: Assigned location ID $locationId for device type',
+          'Nikko location mode: Assigned location ID $locationId for device type',
+        );
+      } else if (locationMode == locationModeChase) {
+        locationId = _getLocationIdForMode(deviceName, locationModeChase);
+        _addMessage(
+          'Chase location mode: Assigned location ID $locationId for device type',
+        );
+      } else if (locationMode == locationModeDev) {
+        locationId = _getLocationIdForMode(deviceName, locationModeDev);
+        _addMessage(
+          'Dev location mode: Assigned location ID $locationId for device type',
         );
       } else {
         locationId = customLocationId ?? '';
         if (locationId.isEmpty) {
           throw Exception(
-            'Custom location ID is required when not using auto mode',
+            'Custom location ID is required when not using custom mode',
           );
         }
         _addMessage(
@@ -854,46 +880,89 @@ class ProvisioningService {
     _resultsController.close();
   }
 
-  /// Get auto location ID based on device type
-  /// X-MINI = 28599, X-SERIES = 28600, X-POE = 28724
-  String _getAutoLocationId(String deviceName) {
+  /// Get location ID based on device type and location mode
+  /// Nikko mode: X-MINI = 28599, X-SERIES = 28600, X-POE = 28724
+  /// Chase mode: X-MINI = 28755, X-SERIES = 28757, X-POE = 28756
+  /// Dev mode: X-MINI = 28758, X-SERIES = 28760, X-POE = 28759
+  String _getLocationIdForMode(String deviceName, String mode) {
     final upperName = deviceName.toUpperCase();
+    String modeName;
+    
+    if (mode == locationModeChase) {
+      modeName = 'Chase';
+    } else if (mode == locationModeDev) {
+      modeName = 'Dev';
+    } else {
+      modeName = 'Nikko';
+    }
 
-    // Check for X-POE (location ID = 28724)
+    // Check for X-POE
     if (upperName.contains('X-POE') ||
         upperName.contains('XPOE') ||
         upperName.contains('X POE')) {
+      String locationId;
+      if (mode == locationModeChase) {
+        locationId = chaseLocationIdXpoe;
+      } else if (mode == locationModeDev) {
+        locationId = devLocationIdXpoe;
+      } else {
+        locationId = autoLocationIdXpoe;
+      }
       _addMessage(
-        '✓ Detected X-POE → Auto Location ID: $autoLocationIdXpoe',
+        '✓ Detected X-POE → $modeName Location ID: $locationId',
       );
-      return autoLocationIdXpoe;
+      return locationId;
     }
 
-    // Check for X-MINI (location ID = 28599)
+    // Check for X-MINI
     if (upperName.contains('X-MINI') ||
         upperName.contains('XMINI') ||
         upperName.contains('X MINI')) {
+      String locationId;
+      if (mode == locationModeChase) {
+        locationId = chaseLocationIdXmini;
+      } else if (mode == locationModeDev) {
+        locationId = devLocationIdXmini;
+      } else {
+        locationId = autoLocationIdXmini;
+      }
       _addMessage(
-        '✓ Detected X-MINI → Auto Location ID: $autoLocationIdXmini',
+        '✓ Detected X-MINI → $modeName Location ID: $locationId',
       );
-      return autoLocationIdXmini;
+      return locationId;
     }
 
-    // Check for X-SERIES (location ID = 28600)
+    // Check for X-SERIES
     if (upperName.contains('X-SERIES') ||
         upperName.contains('XSERIES') ||
         upperName.contains('X SERIES')) {
+      String locationId;
+      if (mode == locationModeChase) {
+        locationId = chaseLocationIdXseries;
+      } else if (mode == locationModeDev) {
+        locationId = devLocationIdXseries;
+      } else {
+        locationId = autoLocationIdXseries;
+      }
       _addMessage(
-        '✓ Detected X-SERIES → Auto Location ID: $autoLocationIdXseries',
+        '✓ Detected X-SERIES → $modeName Location ID: $locationId',
       );
-      return autoLocationIdXseries;
+      return locationId;
     }
 
     // Default fallback to X-MINI location
+    String defaultLocationId;
+    if (mode == locationModeChase) {
+      defaultLocationId = chaseLocationIdXmini;
+    } else if (mode == locationModeDev) {
+      defaultLocationId = devLocationIdXmini;
+    } else {
+      defaultLocationId = autoLocationIdXmini;
+    }
     _addMessage(
-      '⚠ Unknown device type "$deviceName", defaulting to X-MINI location ID: $autoLocationIdXmini',
+      '⚠ Unknown device type "$deviceName", defaulting to X-MINI $modeName location ID: $defaultLocationId',
     );
-    return autoLocationIdXmini;
+    return defaultLocationId;
   }
 
   /// Get controllerTypeId based on Bluetooth device name

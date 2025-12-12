@@ -6,6 +6,7 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:lottie/lottie.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:audioplayers/audioplayers.dart';
 import '../services/auth_state.dart';
 import '../services/provisioning_service.dart';
 import 'sign_in_screen.dart';
@@ -24,7 +25,7 @@ const String _provisionedCountDateKey = 'provisioned_count_date';
 const String _wifiSsidKey = 'scan_settings_wifi_ssid';
 const String _wifiPasswordKey = 'scan_settings_wifi_password';
 const String _rssiThresholdKey = 'scan_settings_rssi_threshold';
-const String _autoLocationModeKey = 'scan_settings_auto_location_mode';
+const String _locationModeKey = 'scan_settings_location_mode';
 const String _customLocationIdKey = 'scan_settings_custom_location_id';
 
 class HomeScreen extends StatefulWidget {
@@ -52,8 +53,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   String _wifiSsid = defaultWifiSsid;
   String _wifiPassword = defaultWifiPassword;
   int _rssiThreshold = kDefaultProximityRssiThreshold; // RSSI threshold for auto-connect
-  bool _autoLocationMode = true; // true = Auto, false = Custom
-  String _customLocationId = ''; // Only used when _autoLocationMode is false
+  String _locationMode = locationModeNikko; // 'nikko', 'chase', or 'custom'
+  String _customLocationId = ''; // Only used when _locationMode is 'custom'
 
   // Bluetooth device list
   final Map<String, ScanResult> _discoveredDevices = {};
@@ -89,6 +90,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // Device info from WHO_AM_I
   DeviceInfo? _currentDeviceInfo;
   StreamSubscription<DeviceInfo>? _deviceInfoSubscription;
+
+  // Audio player for success sound (lazy initialized)
+  AudioPlayer? _audioPlayer;
 
   @override
   void initState() {
@@ -141,7 +145,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final ssid = await _storage.read(key: _wifiSsidKey);
       final password = await _storage.read(key: _wifiPasswordKey);
       final rssiStr = await _storage.read(key: _rssiThresholdKey);
-      final autoModeStr = await _storage.read(key: _autoLocationModeKey);
+      final locationModeStr = await _storage.read(key: _locationModeKey);
       final customLocationId = await _storage.read(key: _customLocationIdKey);
 
       if (mounted) {
@@ -155,8 +159,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           if (rssiStr != null) {
             _rssiThreshold = int.tryParse(rssiStr) ?? kDefaultProximityRssiThreshold;
           }
-          if (autoModeStr != null) {
-            _autoLocationMode = autoModeStr == 'true';
+          if (locationModeStr != null && locationModeStr.isNotEmpty) {
+            _locationMode = locationModeStr;
           }
           if (customLocationId != null) {
             _customLocationId = customLocationId;
@@ -174,7 +178,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       await _storage.write(key: _wifiSsidKey, value: _wifiSsid);
       await _storage.write(key: _wifiPasswordKey, value: _wifiPassword);
       await _storage.write(key: _rssiThresholdKey, value: _rssiThreshold.toString());
-      await _storage.write(key: _autoLocationModeKey, value: _autoLocationMode.toString());
+      await _storage.write(key: _locationModeKey, value: _locationMode);
       await _storage.write(key: _customLocationIdKey, value: _customLocationId);
     } catch (e) {
       debugPrint('Error saving scan settings: $e');
@@ -193,6 +197,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _deviceAddedSubscription?.cancel();
     _deviceInfoSubscription?.cancel();
     _logScrollController.dispose();
+    _audioPlayer?.dispose();
     super.dispose();
   }
 
@@ -473,7 +478,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       bearerToken: bearerToken,
       ssid: _wifiSsid,
       wifiPassword: _wifiPassword,
-      autoLocationMode: _autoLocationMode,
+      locationMode: _locationMode,
       customLocationId: _customLocationId,
     );
 
@@ -620,8 +625,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         });
         // Persist the count to storage
         _saveProvisionedCount();
+        // Play success sound
+        _playSuccessSound();
       }
     });
+  }
+
+  /// Play success sound when device is added
+  Future<void> _playSuccessSound() async {
+    try {
+      _audioPlayer ??= AudioPlayer();
+      await _audioPlayer!.play(AssetSource('sounds/ping.aac'));
+    } catch (e) {
+      debugPrint('Error playing success sound: $e');
+    }
   }
 
   void _openMenuScreen(BuildContext context) {
@@ -749,7 +766,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _startProvisioning() async {
     // Check if custom location ID is required but not provided
-    if (!_autoLocationMode && _customLocationId.trim().isEmpty) {
+    if (_locationMode == locationModeCustom && _customLocationId.trim().isEmpty) {
       _showErrorDialog(
         'Custom Location ID is required. Please go to Scan Settings and enter a Location ID.',
       );
@@ -803,7 +820,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     bool obscurePassword = true;
     int rssiThreshold = _rssiThreshold;
-    bool autoLocationMode = _autoLocationMode;
+    String locationMode = _locationMode;
 
     showDialog(
       context: context,
@@ -1042,19 +1059,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         width: 40,
                         alignment: Alignment.center,
                         child: Icon(
-                          autoLocationMode
+                          locationMode == locationModeNikko
                               ? Icons.auto_awesome
-                              : Icons.location_on_outlined,
-                          color: autoLocationMode
-                              ? const Color(0xFF8B5CF6)
-                              : Colors.grey.shade400,
+                              : locationMode == locationModeChase
+                                  ? Icons.storefront
+                                  : locationMode == locationModeDev
+                                      ? Icons.developer_mode
+                                      : Icons.location_on_outlined,
+                          color: locationMode == locationModeCustom
+                              ? Colors.grey.shade400
+                              : const Color(0xFF8B5CF6),
                           size: 22,
                         ),
                       ),
                       Expanded(
                         child: DropdownButtonHideUnderline(
-                          child: DropdownButton<bool>(
-                            value: autoLocationMode,
+                          child: DropdownButton<String>(
+                            value: locationMode,
                             isExpanded: true,
                             icon: Icon(
                               Icons.keyboard_arrow_down_rounded,
@@ -1068,7 +1089,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ),
                             items: [
                               DropdownMenuItem(
-                                value: true,
+                                value: locationModeNikko,
                                 child: Row(
                                   children: [
                                     Icon(
@@ -1077,12 +1098,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       size: 18,
                                     ),
                                     const SizedBox(width: 10),
-                                    const Text('Auto'),
+                                    const Text('Nikko'),
                                   ],
                                 ),
                               ),
                               DropdownMenuItem(
-                                value: false,
+                                value: locationModeChase,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.storefront,
+                                      color: const Color(0xFF8B5CF6),
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Text('Chase'),
+                                  ],
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: locationModeDev,
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.developer_mode,
+                                      color: const Color(0xFF8B5CF6),
+                                      size: 18,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    const Text('Dev'),
+                                  ],
+                                ),
+                              ),
+                              DropdownMenuItem(
+                                value: locationModeCustom,
                                 child: Row(
                                   children: [
                                     Icon(
@@ -1100,7 +1149,27 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               Align(
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  'Auto',
+                                  'Nikko',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Chase',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Dev',
                                   style: const TextStyle(
                                     color: Colors.white,
                                     fontSize: 16,
@@ -1120,7 +1189,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             ],
                             onChanged: (value) {
                               setDialogState(() {
-                                autoLocationMode = value ?? true;
+                                locationMode = value ?? locationModeNikko;
                               });
                             },
                           ),
@@ -1130,12 +1199,38 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
                 ),
 
-                // Auto mode explanation
-                if (autoLocationMode)
+                // Nikko mode explanation
+                if (locationMode == locationModeNikko)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      'X-Mini → Location: Xmini\nX-Series → Location: Xseries',
+                      'X-Mini → Location: Xmini\nX-Series → Location: Xseries\nX-POE → Location: Xpoe',
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+
+                // Chase mode explanation
+                if (locationMode == locationModeChase)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'X-Mini → Location: Production Xmini (28755)\nX-Series → Location: Production Xseries (28757)\nX-POE → Location: Production Xpoe (28756)',
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+
+                // Dev mode explanation
+                if (locationMode == locationModeDev)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'X-Mini → Location: Dev.Xmini (28758)\nX-Series → Location: Dev.Xseries (28760)\nX-POE → Location: Dev.Xpoe (28759)',
                       style: TextStyle(
                         color: Colors.grey.shade500,
                         fontSize: 12,
@@ -1144,7 +1239,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   ),
 
                 // Custom Location ID (only shown when Custom is selected)
-                if (!autoLocationMode) ...[
+                if (locationMode == locationModeCustom) ...[
                   const SizedBox(height: 16),
                   TextField(
                     controller: customLocationIdController,
@@ -1185,7 +1280,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   _wifiSsid = ssidController.text;
                   _wifiPassword = passwordController.text;
                   _rssiThreshold = rssiThreshold;
-                  _autoLocationMode = autoLocationMode;
+                  _locationMode = locationMode;
                   _customLocationId = customLocationIdController.text;
                 });
                 // Persist settings to storage
@@ -1976,7 +2071,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 )
                               : OutlinedButton.icon(
                                   onPressed:
-                                      (!_autoLocationMode &&
+                                      (_locationMode == locationModeCustom &&
                                           _customLocationId.trim().isEmpty)
                                       ? null
                                       : _startProvisioning,
@@ -1993,13 +2088,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   ),
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor:
-                                        (!_autoLocationMode &&
+                                        (_locationMode == locationModeCustom &&
                                             _customLocationId.trim().isEmpty)
                                         ? Colors.grey.shade600
                                         : const Color(0xFF22C55E),
                                     side: BorderSide(
                                       color:
-                                          (!_autoLocationMode &&
+                                          (_locationMode == locationModeCustom &&
                                               _customLocationId.trim().isEmpty)
                                           ? Colors.grey.shade700
                                           : const Color(0xFF22C55E),
@@ -2011,7 +2106,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   ),
                                 ),
                         ),
-                        if (!_autoLocationMode &&
+                        if (_locationMode == locationModeCustom &&
                             _customLocationId.trim().isEmpty &&
                             !isRunning)
                           Padding(
