@@ -1,4 +1,4 @@
-package com.example.nikko_app
+package com.havenplay.nikkoapp
 
 import io.flutter.embedding.android.FlutterActivity
 

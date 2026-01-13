@@ -70,16 +70,6 @@ class MenuScreen extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: Column(
                   children: [
-                    // Debug Log Button
-                    _MenuButton(
-                      icon: Icons.bug_report_outlined,
-                      title: 'Debug Log',
-                      subtitle: 'View API requests and responses',
-                      onTap: () => _openDebugLog(context),
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
                     // Activity Log Button
                     _MenuButton(
                       icon: Icons.history,

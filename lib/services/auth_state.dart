@@ -7,10 +7,8 @@ class AuthState extends ChangeNotifier {
   factory AuthState() => _instance;
   AuthState._internal();
 
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-  );
+  // Use default Android options (more stable in release builds)
+  static const _storage = FlutterSecureStorage();
 
   static const _tokenKey = 'auth_token';
   static const _refreshTokenKey = 'refresh_token';
@@ -65,6 +63,12 @@ class AuthState extends ChangeNotifier {
       return _token != null && _email != null && _password != null;
     } catch (e) {
       debugPrint('Error loading stored credentials: $e');
+      // Clear corrupted storage on error
+      try {
+        await _storage.deleteAll();
+      } catch (clearError) {
+        debugPrint('Error clearing storage: $clearError');
+      }
       return false;
     }
   }

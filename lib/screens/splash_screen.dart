@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/auth_state.dart';
@@ -22,34 +23,40 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _checkAuthStatus() async {
-    // Small delay to show splash screen
-    await Future.delayed(const Duration(milliseconds: 500));
+    try {
+      // Small delay to show splash screen
+      await Future.delayed(const Duration(milliseconds: 500));
 
-    // Clear keychain on fresh install (iOS Keychain persists after uninstall)
-    await _authState.clearOnFreshInstall();
+      // Clear keychain on fresh install (iOS Keychain persists after uninstall)
+      await _authState.clearOnFreshInstall();
 
-    // Check if we have stored credentials
-    final hasCredentials = await _authState.loadStoredCredentials();
+      // Check if we have stored credentials
+      final hasCredentials = await _authState.loadStoredCredentials();
 
-    if (!hasCredentials) {
-      // No stored credentials, go to sign in
-      _navigateToSignIn();
-      return;
-    }
-
-    // We have stored credentials, validate the token
-    final token = _authState.token;
-    if (token != null) {
-      final isValid = await _authService.validateToken(token);
-
-      if (isValid) {
-        // Token is still valid, go to home
-        _navigateToHome();
-      } else {
-        // Token expired, try to re-authenticate with stored credentials
-        await _tryReAuthenticate();
+      if (!hasCredentials) {
+        // No stored credentials, go to sign in
+        _navigateToSignIn();
+        return;
       }
-    } else {
+
+      // We have stored credentials, validate the token
+      final token = _authState.token;
+      if (token != null) {
+        final isValid = await _authService.validateToken(token);
+
+        if (isValid) {
+          // Token is still valid, go to home
+          _navigateToHome();
+        } else {
+          // Token expired, try to re-authenticate with stored credentials
+          await _tryReAuthenticate();
+        }
+      } else {
+        _navigateToSignIn();
+      }
+    } catch (e) {
+      // If anything fails during auth check, go to sign in
+      debugPrint('Error during auth check: $e');
       _navigateToSignIn();
     }
   }

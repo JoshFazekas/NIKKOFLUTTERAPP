@@ -39,10 +39,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final _provisioningService = ProvisioningService();
   
   // Secure storage for persisting provisioned count
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock),
-  );
+  static const _storage = FlutterSecureStorage();
 
   ProvisioningStatus _status = ProvisioningStatus.idle;
   final List<String> _logMessages = [];
