@@ -632,6 +632,11 @@ class ProvisioningService {
         // Don't throw - continue with BLE stop
       }
 
+      // Step 5: Turn on rainbow lighting effect
+      _addMessage('--- Setting Lighting Effect ---');
+      await sendCommand('<LIGHTING.ON({"CH":[-1],"FUNCTION":"Custom","BRIGHTNESS":100,"Config":{"colorSelections":["0,100,100","120,100,100","240,100,100","0,0,100"],"bgColor":[0, 0, 0],"colorLength":72,"paddingLength":3,"transitionType":"None","movingSpeed":50,"enableMirror":0,"mirrorPosition":0,"oscAmp":0,"oscPeriod":0}})>');
+      await Future.delayed(const Duration(milliseconds: 500));
+
       // Stop BLE advertising - this completes provisioning
       _addMessage('--- Stopping BLE Advertising ---');
       try {
